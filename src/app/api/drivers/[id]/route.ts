@@ -23,7 +23,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
       if (!DRIVER_STATUSES.includes(String(body.status))) {
         throw new ApiError(400, 'Status must be one of: AVAILABLE, ON_TRIP, OFFLINE')
       }
-      data.status = body.status
+      data.status = String(body.status)
     }
     if (body.dailyRate !== undefined) {
       data.dailyRate = optionalInt(body.dailyRate, 'Daily rate', { min: 500, max: 20000 })

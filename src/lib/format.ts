@@ -66,10 +66,11 @@ export function statusTone(status: string): 'neutral' | 'info' | 'success' | 'wa
     OUT_FOR_DELIVERY: 'info',
     ACTIVE: 'success',
     RETURNED: 'warning',
-    COMPLETED: 'neutral',
+    // COMPLETED: shared by bookings + payments (and drivers' stats);
+    // a single entry avoids the duplicate-key last-wins trap
+    COMPLETED: 'success',
     // payments
     PENDING: 'warning',
-    COMPLETED: 'success',
     FAILED: 'danger',
     REFUNDED: 'info',
     UNPAID: 'warning',
@@ -82,7 +83,6 @@ export function statusTone(status: string): 'neutral' | 'info' | 'success' | 'wa
     ON_TRIP: 'info',
     OFFLINE: 'neutral',
     // users
-    ACTIVE: 'success',
     SUSPENDED: 'danger',
   }
   return map[status] ?? 'neutral'
@@ -98,9 +98,9 @@ export function statusLabel(status: string): string {
     OUT_FOR_DELIVERY: 'Out for delivery',
     ACTIVE: 'Active',
     RETURNED: 'Returned',
+    // COMPLETED shared by bookings + payments
     COMPLETED: 'Completed',
     PENDING: 'Pending',
-    COMPLETED: 'Completed',
     FAILED: 'Failed',
     REFUNDED: 'Refunded',
     UNPAID: 'Unpaid',

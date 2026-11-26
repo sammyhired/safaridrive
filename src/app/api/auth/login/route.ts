@@ -10,17 +10,15 @@ export async function POST(req: Request) {
   return handle(async () => {
     const body = await readJson(req)
     const email = requireString(body.email, 'Email', { max: 120 }).toLowerCase()
-    const password = requireString(body.password, 'Password')
+    const password = requireString(body.password, 'Password', { max: 200 })
 
     const user = await db.user.findUnique({ where: { email } })
-    if (!user || !verifyPassword(password, user.passwordHash)) {
+    // Single generic failure for every reason (no user / wrong password /
+    // suspended / unknown role) — prevents account enumeration.
+    const ok = user ? await verifyPassword(password, user.passwordHash) : false
+    const allowed = ok && user !== null && user.status === 'ACTIVE' && ROLES.includes(user.role as Role)
+    if (!allowed || !user) {
       throw new ApiError(401, 'Invalid email or password')
-    }
-    if (user.status !== 'ACTIVE') {
-      throw new ApiError(401, 'This account has been suspended')
-    }
-    if (!ROLES.includes(user.role as Role)) {
-      throw new ApiError(401, 'This account cannot sign in')
     }
 
     await createSession(user.id)

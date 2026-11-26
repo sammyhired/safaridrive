@@ -122,8 +122,8 @@ export default function LoginDialog({
       toast({ title: 'Please fill in all fields', variant: 'destructive' })
       return
     }
-    if (password.length < 6) {
-      toast({ title: 'Password must be at least 6 characters', variant: 'destructive' })
+    if (password.length < 8) {
+      toast({ title: 'Password must be at least 8 characters', variant: 'destructive' })
       return
     }
     setBusy('register')
@@ -278,7 +278,7 @@ export default function LoginDialog({
                   id="reg-password"
                   type="password"
                   autoComplete="new-password"
-                  placeholder="At least 6 characters"
+                  placeholder="At least 8 characters"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   disabled={busy !== null}

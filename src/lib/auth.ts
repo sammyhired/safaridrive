@@ -1,21 +1,30 @@
 // ============================================================
 // SafariDrive — session auth (HMAC-signed `sd_session` cookie)
 // Runs in Node runtime route handlers. No server actions.
+//
+// Security properties:
+//  - HMAC-SHA256 over the payload, verified with timingSafeEqual
+//  - payload carries an absolute expiry (`exp`); stolen tokens die
+//  - scrypt (N=16384 default) with per-user salt, timing-safe compare
+//  - httpOnly + SameSite=Lax cookie; `secure` when the request is https
+//    (x-forwarded-proto, set by the gateway) so logins survive both the
+//    http dev server and the https production front door
 // ============================================================
 import crypto from 'node:crypto'
-import { cookies } from 'next/headers'
+import { cookies, headers } from 'next/headers'
 import { NextResponse } from 'next/server'
 import { db } from './db'
 import type { Role, SessionUser } from './types'
 
 export const SESSION_COOKIE = 'sd_session'
-const SESSION_MAX_AGE = 60 * 60 * 24 * 30 // 30 days
+const SESSION_MAX_AGE = 60 * 60 * 24 * 7 // 7 days (short-lived by default)
 
 const ROLES: Role[] = ['CUSTOMER', 'OWNER', 'DRIVER', 'ADMIN']
 
 function sessionSecret(): string {
   const secret = process.env.SESSION_SECRET
   if (!secret) throw new Error('SESSION_SECRET is not set')
+  if (secret.length < 32) throw new Error('SESSION_SECRET must be at least 32 characters')
   return secret
 }
 
@@ -31,27 +40,47 @@ function safeEqual(a: string, b: string): boolean {
 }
 
 // ---------- Password hashing (scrypt, "salt:hash" hex) ----------
-export function hashPassword(password: string): string {
+// Async wrapper: scryptSync blocks the event loop and is trivially used
+// for CPU-exhaustion by spamming login attempts.
+const scryptAsync = (password: string, salt: string) =>
+  new Promise<Buffer>((resolve, reject) => {
+    crypto.scrypt(password, salt, 64, (err, derived) => (err ? reject(err) : resolve(derived)))
+  })
+
+export async function hashPassword(password: string): Promise<string> {
   const salt = crypto.randomBytes(16).toString('hex')
-  const hash = crypto.scryptSync(password, salt, 64).toString('hex')
+  const hash = (await scryptAsync(password, salt)).toString('hex')
   return `${salt}:${hash}`
 }
 
-export function verifyPassword(password: string, stored: string): boolean {
+export async function verifyPassword(password: string, stored: string): Promise<boolean> {
   const [salt, hash] = stored.split(':')
-  if (!salt || !hash) return false
+  if (!salt || !hash) {
+    // Consume comparable time so "malformed hash" isn't distinguishable by timing
+    await scryptAsync(password, '0000000000000000')
+    return false
+  }
   const expected = Buffer.from(hash, 'hex')
-  const candidate = crypto.scryptSync(password, salt, 64)
+  const candidate = await scryptAsync(password, salt)
   return expected.length === candidate.length && crypto.timingSafeEqual(expected, candidate)
 }
 
 // ---------- Session cookie ----------
+async function isSecureRequest(): Promise<boolean> {
+  const h = await headers()
+  const proto = h.get('x-forwarded-proto')
+  if (proto) return proto.split(',')[0].trim() === 'https'
+  return false
+}
+
 export async function createSession(userId: string): Promise<void> {
-  const payload = Buffer.from(JSON.stringify({ userId }), 'utf8').toString('base64url')
+  const exp = Math.floor(Date.now() / 1000) + SESSION_MAX_AGE
+  const payload = Buffer.from(JSON.stringify({ userId, exp }), 'utf8').toString('base64url')
   const token = `${payload}.${sign(payload)}`
   const store = await cookies()
   store.set(SESSION_COOKIE, token, {
     httpOnly: true,
+    secure: await isSecureRequest(),
     path: '/',
     maxAge: SESSION_MAX_AGE,
     sameSite: 'lax',
@@ -60,7 +89,13 @@ export async function createSession(userId: string): Promise<void> {
 
 export async function destroySession(): Promise<void> {
   const store = await cookies()
-  store.set(SESSION_COOKIE, '', { httpOnly: true, path: '/', maxAge: 0, sameSite: 'lax' })
+  store.set(SESSION_COOKIE, '', {
+    httpOnly: true,
+    secure: await isSecureRequest(),
+    path: '/',
+    maxAge: 0,
+    sameSite: 'lax',
+  })
 }
 
 export async function getSessionUser(): Promise<SessionUser | null> {
@@ -74,13 +109,14 @@ export async function getSessionUser(): Promise<SessionUser | null> {
   if (!payload || !signature) return null
   if (!safeEqual(signature, sign(payload))) return null
 
-  let data: { userId?: unknown }
+  let data: { userId?: unknown; exp?: unknown }
   try {
     data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'))
   } catch {
     return null
   }
   if (typeof data.userId !== 'string' || !data.userId) return null
+  if (typeof data.exp !== 'number' || data.exp * 1000 < Date.now()) return null
 
   const user = await db.user.findFirst({ where: { id: data.userId, status: 'ACTIVE' } })
   if (!user) return null

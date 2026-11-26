@@ -93,7 +93,8 @@ export interface DriverProfile {
   userId: string
   name: string
   phone: string | null
-  licenseNo: string
+  /** Null when the list is PII-stripped for non-fleet-manager roles. */
+  licenseNo: string | null
   yearsExperience: number
   dailyRate: number
   status: DriverStatus
@@ -315,6 +316,8 @@ export interface TrackingResponse {
     deliveryAddress: string | null
   }
   trip: TripState | null
+  /** Per-booking signed token required by the tracking socket (join-trip). */
+  joinToken: string | null
 }
 
 // ---- Auth API shapes ----

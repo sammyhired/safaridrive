@@ -66,10 +66,14 @@ export default function TrackingPanel({ booking, open, onOpenChange }: TrackingP
   const latest = localLatest ?? trip?.latest ?? null
   const path = localPath ?? trip?.path ?? []
 
-  // Socket lifecycle: join on open, leave on close, stream updates.
+  // Socket lifecycle: join on open (with the per-booking token issued by the
+  // auth-checked proxy endpoint), leave on close, stream updates. Until the
+  // token arrives the panel relies on the REST snapshot above.
+  const joinToken = trackingQuery.data?.joinToken ?? null
+
   useEffect(() => {
-    if (!open || !socket) return
-    socket.emit('join-trip', { bookingId: booking.id })
+    if (!open || !socket || !joinToken) return
+    socket.emit('join-trip', { bookingId: booking.id, token: joinToken })
 
     const onState = (state: TripState) => {
       setLocalTrip(state)
@@ -99,7 +103,7 @@ export default function TrackingPanel({ booking, open, onOpenChange }: TrackingP
       socket.off('position', onPosition)
       socket.emit('leave-trip', { bookingId: booking.id })
     }
-  }, [open, socket, booking.id])
+  }, [open, socket, booking.id, joinToken])
 
   // ---- derived map data ----
   const v = booking.vehicle

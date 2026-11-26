@@ -137,10 +137,44 @@ The build needs no Gradle and no JDK — it drives `aapt2` / `d8` / `apksigner`
 directly and falls back to the Eclipse compiler (ECJ) on a JRE-only machine.
 CI does the same on `ubuntu-latest`.
 
-> **Before Play Store upload**: replace `android/keystore/safaridrive-dev.jks`
-> with your own private keystore (the shared dev key is for testing only) and
-> review `android:usesCleartextTraffic` (currently on so operators can point
-> apps at `http://` LAN/staging servers — turn it off for production HTTPS).
+### Release signing policy (important)
+
+Signing keys are **never committed** to this repository — `android/keystore/`
+is gitignored, and `build.sh` generates a fresh local keystore when one is
+missing. That means:
+
+- **CI artifacts are test-only**: each GitHub Actions run signs with an
+  ephemeral key, so those APKs cannot upgrade one another. Fine for testing,
+  never for distribution.
+- **Releases are signed on the operator machine**: keep one private keystore
+  (outside git) and sign there — `VERSION_CODE=2 VERSION_NAME=1.0.1 bash android/build.sh`.
+  Losing that key means a new app listing; guard it like production credentials.
+- Review `android:usesCleartextTraffic` (currently on so operators can point
+  apps at `http://` LAN/staging servers — turn it off for production HTTPS).
+
+---
+
+## Security model
+
+The platform is multi-sided (customers, owners, drivers, admins share one
+backend), so every layer assumes the other side may be hostile:
+
+| Layer | Controls |
+|---|---|
+| Sessions | HMAC-SHA256 `httpOnly` cookie with embedded expiry, `SameSite=Lax`, `secure` behind https; scrypt password hashing (timing-safe compares); single generic login failure (no account enumeration); 7-day max session |
+| API surface | Every route authenticates and re-checks **object ownership** (booking/payment/tracking access limited to that booking's customer, its owner, its driver, or admin); server-side price recomputation on every booking/payment — client totals are never trusted |
+| Payments | M-Pesa Daraja adapter; the demo callback protocol is only accepted while `MPESA_MODE=mock` — in daraja mode only the official `stkCallback` shape is processed, optionally gated by `MPESA_CALLBACK_SECRET` until IP allowlisting is in place |
+| Rate limiting | Tiered per-IP limits in `src/middleware.ts` — 10/5min for auth, 30/5min for payments, 90/5min for quotes (429 + `Retry-After`) |
+| CSRF | `SameSite=Lax` cookies plus an Origin check on every state-changing request: a browser-supplied Origin whose host is neither the deployment host nor in `ALLOWED_ORIGINS` is refused (non-browser callers like Daraja callbacks pass) |
+| Tracking service | `/sim/*` and `/trips/*` require the `x-internal-key` shared secret (fail-closed); socket `join-trip` requires a per-booking HMAC token (10-min TTL) issued only after an ownership check — a visitor cannot subscribe to someone else's live GPS; ingest is validated (lat/lng ranges, speed caps, sane timestamps) and rate-limited per device |
+| PII | Driver phone/licence numbers only appear for fleet managers; customers picking a chauffeur get a stripped list; no card data is ever stored |
+| Transport | CSP (`frame-ancestors 'none'`, `object-src 'none'`), `X-Frame-Options: DENY`, `nosniff`, strict Referrer-Policy, Permissions-Policy, COOP, HSTS on https |
+| Repo hygiene | Secrets only via `.env` (gitignored); the tracking key is never shared in code; Android signing keys are never committed (see above) |
+
+Known trade-offs (documented on purpose): the dev-server CSP keeps
+`unsafe-inline`/`unsafe-eval` for HMR — tighten when serving a production
+build; in-memory rate limiting and the tracking token TTL assume a single
+instance — move to Redis/shorter TTLs when scaling horizontally.
 
 ---
 

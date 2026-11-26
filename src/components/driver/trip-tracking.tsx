@@ -53,9 +53,13 @@ export function TripTracking({ booking }: { booking: Booking }) {
   const restLatest = restTrip?.latest ? toEventPosition(restTrip.latest) : null
   const latest = liveLatest ?? restLatest
 
-  // Join the trip room; leave on unmount.
+  // Join the trip room (requires the per-booking token from the auth-checked
+  // proxy endpoint); leave on unmount. Joins as soon as the token arrives.
+  const joinToken = trackingQuery.data?.joinToken ?? null
+
   useEffect(() => {
-    socket.emit('join-trip', { bookingId: booking.id })
+    if (!joinToken) return
+    socket.emit('join-trip', { bookingId: booking.id, token: joinToken })
 
     const onTripState = (state: TripState) => {
       setLiveTrip(state)
@@ -70,7 +74,7 @@ export function TripTracking({ booking }: { booking: Booking }) {
       socket.off('position', onPosition)
       socket.emit('leave-trip', { bookingId: booking.id })
     }
-  }, [socket, booking.id])
+  }, [socket, booking.id, joinToken])
 
   const markers = useMemo<MapMarker[]>(() => {
     const list: MapMarker[] = []

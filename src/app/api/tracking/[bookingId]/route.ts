@@ -1,3 +1,4 @@
+import crypto from 'node:crypto'
 import { NextResponse } from 'next/server'
 import { requireUser } from '@/lib/auth'
 import { db } from '@/lib/db'
@@ -5,6 +6,24 @@ import { fetchTripState } from '@/lib/tracking-client'
 import { ApiError, handle, vehicleLabel } from '@/app/api/_lib/api'
 
 type Ctx = { params: Promise<{ bookingId: string }> }
+
+const JOIN_TOKEN_TTL_S = 600 // 10 minutes
+
+/**
+ * Per-booking HMAC token (signed with TRACKING_INTERNAL_KEY) that the
+ * customer's map presents to the tracking service's socket to subscribe to
+ * this booking's live GPS. Issued only after the ownership check below —
+ * an unrelated visitor can never obtain one.
+ */
+function issueJoinToken(bookingId: string): string | null {
+  const key = process.env.TRACKING_INTERNAL_KEY
+  if (!key) return null
+  const payload = Buffer.from(
+    JSON.stringify({ b: bookingId, exp: Math.floor(Date.now() / 1000) + JOIN_TOKEN_TTL_S }),
+  ).toString('base64url')
+  const sig = crypto.createHmac('sha256', key).update(payload).digest('base64url')
+  return `${payload}.${sig}`
+}
 
 export async function GET(_req: Request, ctx: Ctx) {
   return handle(async () => {
@@ -25,6 +44,7 @@ export async function GET(_req: Request, ctx: Ctx) {
     }
 
     const trip = await fetchTripState(booking.id)
+    const joinToken = issueJoinToken(booking.id)
 
     return NextResponse.json({
       booking: {
@@ -38,6 +58,7 @@ export async function GET(_req: Request, ctx: Ctx) {
         deliveryAddress: booking.deliveryAddress,
       },
       trip,
+      joinToken,
     })
   })
 }

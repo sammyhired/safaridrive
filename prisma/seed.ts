@@ -71,7 +71,7 @@ async function main(): Promise<void> {
   await db.user.deleteMany()
 
   // ---------- users ----------
-  const passwordHash = hashPassword('demo123')
+  const passwordHash = await hashPassword('demo123')
 
   const [admin, owner, coast, amina, brian, faith] = await Promise.all([
     db.user.create({

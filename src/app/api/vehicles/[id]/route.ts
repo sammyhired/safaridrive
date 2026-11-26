@@ -61,7 +61,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
     if (body.year !== undefined) data.year = requireInt(body.year, 'Year', { min: 1980, max: new Date().getFullYear() + 1 })
     if (body.category !== undefined) {
       if (!CATEGORY_ORDER.includes(body.category as never)) throw new ApiError(400, 'Unknown category')
-      data.category = body.category
+      data.category = String(body.category)
     }
     if (body.plate !== undefined) data.plate = requireString(body.plate, 'Plate', { min: 4, max: 12 }).toUpperCase()
     if (body.seats !== undefined) data.seats = requireInt(body.seats, 'Seats', { min: 2, max: 60 })
@@ -70,7 +70,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
       if (!['Manual', 'Automatic'].includes(String(body.transmission))) {
         throw new ApiError(400, 'Transmission must be Manual or Automatic')
       }
-      data.transmission = body.transmission
+      data.transmission = String(body.transmission)
     }
     if (body.fuelType !== undefined) data.fuelType = requireString(body.fuelType, 'Fuel type', { max: 20 })
     if (body.dailyRate !== undefined) data.dailyRate = requireInt(body.dailyRate, 'Daily rate', { min: 500, max: 500000 })
@@ -106,7 +106,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
       if (!['AVAILABLE', 'MAINTENANCE'].includes(String(body.status))) {
         throw new ApiError(400, 'Status can only be set to AVAILABLE or MAINTENANCE')
       }
-      data.status = body.status
+      data.status = String(body.status)
     }
 
     const updated = await db.vehicle.update({ where: { id }, data, include: vehicleInclude })

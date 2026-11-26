@@ -24,6 +24,7 @@
 // via globalThis guards below so the port is re-bound cleanly.
 // ============================================================================
 
+import crypto from 'node:crypto'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { Server as SocketIOServer, type Socket } from 'socket.io'
 
@@ -367,8 +368,8 @@ function createTrip(
       }
       trip.progress = 1
       trip.etaMin = 0
-      trip.latest = { lat: trip.to.lat, lng: trip.to.lng, speed: 0, heading: 0, ts: nowIso() }
-      trip.path = [{ ...trip.to }]
+      trip.latest = { lat: to.lat, lng: to.lng, speed: 0, heading: 0, ts: nowIso() }
+      trip.path = [{ ...to }]
       return trip
     }
     // Pace the trip to complete in ~3–4 minutes for typical delivery
@@ -387,14 +388,14 @@ function createTrip(
     const heading = bearingDeg(from, to)
     trip.lastHeading = heading
     trip.latest = {
-      lat: trip.from.lat,
-      lng: trip.from.lng,
+      lat: from.lat,
+      lng: from.lng,
       speed: r1(clamp(sim.baseMps * 3.6, 20, 60)),
       heading: r1(heading),
       ts: nowIso(),
     }
     trip.etaMin = Math.max(1, Math.round(durationS / 60))
-    trip.path = [{ ...trip.from }]
+    trip.path = [{ ...from }]
   } else {
     const sim = buildRentalSim(to)
     trip.sim = sim
@@ -530,6 +531,85 @@ function stepSim(trip: Trip, dt: number): void {
 const isArrived = (sim: Sim | null): boolean =>
   !!sim && sim.kind === 'DELIVERY' && sim.arrived
 
+// ------------------------ internal auth (shared key) ------------------------
+
+/**
+ * Shared secret between the Next.js backend and this service.
+ * Used two ways:
+ *   - `x-internal-key` header: required for /sim/* and /trips/* (the platform
+ *     backend is the only legitimate caller; the public must never reach them)
+ *   - HMAC-SHA256 join tokens (`b` = bookingId, `exp`), issued per-booking by
+ *     the app after an ownership check; required for socket join-trip so a
+ *     random visitor cannot subscribe to someone else's live GPS.
+ * Fail closed: with no key configured, every privileged call is refused.
+ */
+const INTERNAL_KEY = process.env.TRACKING_INTERNAL_KEY ?? ''
+
+function requireInternalKey(req: IncomingMessage): boolean {
+  if (!INTERNAL_KEY) return false // fail closed when unconfigured
+  const presented = req.headers['x-internal-key']
+  const value = Array.isArray(presented) ? presented[0] : presented
+  if (typeof value !== 'string' || value.length !== INTERNAL_KEY.length) return false
+  return crypto.timingSafeEqual(Buffer.from(value), Buffer.from(INTERNAL_KEY))
+}
+
+interface JoinTokenClaims {
+  b: string // bookingId this token unlocks
+  exp: number // epoch seconds
+}
+
+/** HMAC-SHA256 "payload.signature" (base64url); timing-safe compare. */
+function verifyJoinToken(raw: unknown, bookingId: string): boolean {
+  if (!INTERNAL_KEY || typeof raw !== 'string' || raw.length > 512) return false
+  const dot = raw.indexOf('.')
+  if (dot <= 0) return false
+  const payload = raw.slice(0, dot)
+  const signature = raw.slice(dot + 1)
+  const expected = crypto.createHmac('sha256', INTERNAL_KEY).update(payload).digest('base64url')
+  const a = Buffer.from(signature)
+  const b = Buffer.from(expected)
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return false
+  try {
+    const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as JoinTokenClaims
+    return (
+      typeof claims.b === 'string' &&
+      claims.b === bookingId &&
+      typeof claims.exp === 'number' &&
+      claims.exp * 1000 > Date.now()
+    )
+  } catch {
+    return false
+  }
+}
+
+// --------------------------- ingest protections ----------------------------
+
+/** Per-vehicle ingest rate limit: 30 positions / minute / vehicle id. */
+const ingestBuckets = new Map<string, { count: number; resetAt: number }>()
+
+function ingestAllowed(id: string): boolean {
+  const now = Date.now()
+  const b = ingestBuckets.get(id)
+  if (!b || b.resetAt <= now) {
+    ingestBuckets.set(id, { count: 1, resetAt: now + 60_000 })
+    if (ingestBuckets.size > 5000) {
+      for (const [k, v] of ingestBuckets) if (v.resetAt <= now) ingestBuckets.delete(k)
+    }
+    return true
+  }
+  b.count += 1
+  return b.count <= 30
+}
+
+/** Trackers with dead clocks must not backdate/future-date trips. */
+function saneTimestamp(tsMs: number): number {
+  const now = Date.now()
+  if (tsMs < now - 24 * 3600_000) return now // older than a day: ignore device clock
+  if (tsMs > now + 10 * 60_000) return now // more than 10 min ahead: ignore
+  return tsMs
+}
+
+
 // ------------------------------- REST layer --------------------------------
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
@@ -537,9 +617,9 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
     'Content-Length': Buffer.byteLength(payload),
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    // No CORS headers on purpose: the REST surface is for the platform
+    // backend (server-to-server, authenticated by x-internal-key) and for
+    // native GPS trackers. Browser access is neither needed nor wanted.
     'Cache-Control': 'no-store',
   })
   res.end(payload)
@@ -628,7 +708,7 @@ function startSim(body: Record<string, unknown>): TripStateJson {
 interface PositionInput {
   id: unknown
   lat: unknown
-  lon: unknown
+  lon?: unknown
   lng?: unknown
   timestamp: unknown
   speed: unknown
@@ -643,9 +723,13 @@ function ingestPosition(p: PositionInput): { tripActive: boolean } {
   if (lat === null || lng === null || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
     throw new HttpError(400, 'lat/lon must be finite numbers (lat -90..90, lon/lng -180..180)')
   }
-  const tsMs = parseTimestamp(p.timestamp) ?? Date.now()
+  if (!ingestAllowed(id)) {
+    log(`ingest vehicle=${id} dropped: rate limit`)
+    return { tripActive: false }
+  }
+  const tsMs = saneTimestamp(parseTimestamp(p.timestamp) ?? Date.now())
   const speedRaw = num(p.speed)
-  const speed = speedRaw !== null && speedRaw >= 0 ? speedRaw : 0
+  const speed = speedRaw !== null && speedRaw >= 0 ? Math.min(speedRaw, 300) : 0
   const headingRaw = num(p.heading)
   const pos: GpsPoint = { lat, lng }
 
@@ -715,11 +799,10 @@ async function handleRest(req: IncomingMessage, res: ServerResponse): Promise<vo
     const path = u.pathname
 
     if (method === 'OPTIONS') {
-      res.writeHead(204, {
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type',
-      })
+      // No CORS allow-origin: browsers are intentionally NOT permitted to
+      // call this service's REST API cross-origin (the web app talks to it
+      // server-to-server; native trackers do not preflight).
+      res.writeHead(204)
       res.end()
       return
     }
@@ -734,14 +817,16 @@ async function handleRest(req: IncomingMessage, res: ServerResponse): Promise<vo
       })
     }
 
-    // --- simulation control ---
+    // --- simulation control (platform backend only) ---
     if (path === '/sim/start' && method === 'POST') {
+      if (!requireInternalKey(req)) return sendJson(res, 403, { error: 'forbidden' })
       const body = await readJson(req)
       const trip = startSim(body)
       return sendJson(res, 200, { ok: true, trip })
     }
 
     if (path === '/sim/stop' && method === 'POST') {
+      if (!requireInternalKey(req)) return sendJson(res, 403, { error: 'forbidden' })
       const body = await readJson(req)
       const bookingId = strField(body.bookingId)
       if (!bookingId) return sendJson(res, 400, { error: 'bookingId is required' })
@@ -753,8 +838,9 @@ async function handleRest(req: IncomingMessage, res: ServerResponse): Promise<vo
       return sendJson(res, 200, { ok: true, stopped: true })
     }
 
-    // --- trip state ---
+    // --- trip state (platform backend only; the app re-checks ownership) ---
     if (path.startsWith('/trips/') && method === 'GET') {
+      if (!requireInternalKey(req)) return sendJson(res, 403, { error: 'forbidden' })
       let bookingId = path.slice('/trips/'.length)
       try {
         bookingId = decodeURIComponent(bookingId)
@@ -893,6 +979,17 @@ io.on('connection', (socket: Socket) => {
     try {
       const bookingId = extractBookingId(data)
       if (!bookingId) return
+      // Live GPS is sensitive: only holders of a per-booking token issued by
+      // the platform (after an ownership check) may subscribe.
+      const token =
+        data && typeof data === 'object'
+          ? (data as Record<string, unknown>).token
+          : undefined
+      if (!verifyJoinToken(token, bookingId)) {
+        socket.emit('join-error', { bookingId, reason: 'unauthorized' })
+        warn(`join-trip rejected for ${socket.id} booking=${bookingId.slice(0, 12)}..: bad token`)
+        return
+      }
       void socket.join(roomFor(bookingId))
       // Immediately send the full trip state (inactive shape when unknown).
       socket.emit('trip-state', getState(bookingId))
