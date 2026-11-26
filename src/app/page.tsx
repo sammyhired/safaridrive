@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ThemeProvider } from 'next-themes'
 import { CarFront, MapPin, Smartphone, Wallet } from 'lucide-react'
@@ -99,6 +99,17 @@ export default function Home() {
 
   const roleView = useAppStore((s) => s.roleView)
   const setRoleView = useAppStore((s) => s.setRoleView)
+
+  // Mobile shells (APKs) deep-link into their side via /?app=customer|owner|driver|admin
+  useEffect(() => {
+    const app = (new URLSearchParams(window.location.search).get('app') ?? '').toLowerCase()
+    if (app === 'customer' || app === 'owner' || app === 'driver' || app === 'admin') {
+      setRoleView(app.toUpperCase() as Role)
+    }
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').catch(() => {})
+    }
+  }, [setRoleView])
 
   return (
     <QueryClientProvider client={queryClient}>

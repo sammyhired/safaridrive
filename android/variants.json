@@ -1,0 +1,38 @@
+[
+  {
+    "id": "customer",
+    "role": "CUSTOMER",
+    "appName": "SafariDrive",
+    "appId": "ke.co.safaridrive.customer",
+    "blurb": "Search cars, book, pay and track",
+    "color": "#047857",
+    "colorDark": "#03523E"
+  },
+  {
+    "id": "owner",
+    "role": "OWNER",
+    "appName": "SafariDrive Owner",
+    "appId": "ke.co.safaridrive.owner",
+    "blurb": "Fleet, yards & payouts console",
+    "color": "#B45309",
+    "colorDark": "#7C3A06"
+  },
+  {
+    "id": "driver",
+    "role": "DRIVER",
+    "appName": "SafariDrive Driver",
+    "appId": "ke.co.safaridrive.driver",
+    "blurb": "Chauffeur jobs & navigation",
+    "color": "#15803D",
+    "colorDark": "#0E5A2C"
+  },
+  {
+    "id": "admin",
+    "role": "ADMIN",
+    "appName": "SafariDrive Admin",
+    "appId": "ke.co.safaridrive.admin",
+    "blurb": "Platform control center",
+    "color": "#BE123C",
+    "colorDark": "#830E2B"
+  }
+]

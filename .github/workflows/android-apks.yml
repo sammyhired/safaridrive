@@ -1,0 +1,37 @@
+name: Android APKs
+
+on:
+  push:
+    paths:
+      - "android/**"
+      - ".github/workflows/android-apks.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build the four side apps
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install Android SDK packages
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "build-tools;34.0.0" "platforms;android-34" > /dev/null
+
+      - name: Build all APKs
+        run: bash android/build.sh
+
+      - name: Upload APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: safaridrive-apks
+          path: android/out/*.apk
+          if-no-files-found: error

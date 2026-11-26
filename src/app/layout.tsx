@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
@@ -18,8 +18,14 @@ export const metadata: Metadata = {
   description:
     "Book a car in minutes, pay securely with M-Pesa or card, choose pickup, delivery or chauffeur, and track your vehicle live. A two-sided car rental platform for Kenya.",
   keywords: ["car rental", "Kenya", "M-Pesa", "chauffeur", "vehicle tracking", "Nairobi"],
+  manifest: "/manifest.webmanifest",
   icons: {
-    icon: "/logo.svg",
+    icon: [
+      { url: "/logo.svg", type: "image/svg+xml" },
+      { url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icons/icon-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: [{ url: "/icons/icon-192.png", sizes: "192x192" }],
   },
   openGraph: {
     title: "SafariDrive — Car Rental Platform",
@@ -27,6 +33,12 @@ export const metadata: Metadata = {
     siteName: "SafariDrive",
     type: "website",
   },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#047857",
+  width: "device-width",
+  initialScale: 1,
 };
 
 export default function RootLayout({

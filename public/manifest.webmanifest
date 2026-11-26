@@ -1,0 +1,30 @@
+{
+  "name": "SafariDrive — Car Rental",
+  "short_name": "SafariDrive",
+  "description": "Book. Pay. Drive. Two-sided car rental platform for Kenya — search cars, pay with M-Pesa or card, choose pickup, delivery or chauffeur, and track live.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#ffffff",
+  "theme_color": "#047857",
+  "categories": ["travel", "business", "navigation"],
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "/icons/maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

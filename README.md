@@ -87,10 +87,62 @@ src/app/api/       REST endpoints (auth, vehicles, yards, quote, bookings,
                    payments, tracking, reviews, expenses, stats, users, promos)
 src/components/    customer/ owner/ admin/ driver/ shared/ UI workspaces
 src/lib/           types contract, pricing engine, M-Pesa adapter, auth, format helpers
+android/           APK sources + build pipeline for the four side apps (see below)
 mini-services/
   tracking-service/  socket.io GPS service + OSMAND ingest + simulator
 docs/CONTRACTS.md    the full API + component contract used to build the app
 ```
+
+---
+
+## Android apps (APK) — one per side
+
+Every side of the platform ships as an installable Android app. Each APK is a
+lightweight (~40 KB) native shell around the SafariDrive web platform:
+
+| App | Package | Opens |
+|---|---|---|
+| SafariDrive | `ke.co.safaridrive.customer` | Customer side (search / book / pay / track) |
+| SafariDrive Owner | `ke.co.safaridrive.owner` | Owner & yard console |
+| SafariDrive Driver | `ke.co.safaridrive.driver` | Driver / chauffeur console |
+| SafariDrive Admin | `ke.co.safaridrive.admin` | Platform control centre |
+
+On first launch each app asks for the **server address** of the SafariDrive
+platform (kept in the device's localStorage), then deep-links straight into its
+side via `/?app=<role>` and remembers it. If the server is unreachable the app
+shows an offline screen with retry / change-server actions. Location permission
+is requested on first use so the maps and "near me" features work inside the shell.
+
+Signed APKs are served by the platform itself at **`/apk/`** (e.g.
+`/apk/SafariDrive-Owner-v1.0.0.apk`) and rebuilt on every push by the
+`Android APKs` GitHub Action (download from the run's *Artifacts*).
+
+### Installing on a phone
+1. Open the platform in the phone's browser and tap an APK link under `/apk/`
+   (or download from GitHub Actions artifacts).
+2. Allow "install unknown apps" for your browser when prompted — the APKs are
+   self-signed.
+3. Open the app, enter your server address, done.
+
+### Rebuilding from source
+```bash
+# once: Android SDK with build-tools 34 + platform 34
+sdkmanager "build-tools;34.0.0" "platforms;android-34"
+
+bash android/build.sh          # -> android/out/ + public/apk/
+bash android/tools/gen-icons.mjs  # regenerate launcher/PWA icons (needs sharp)
+```
+
+The build needs no Gradle and no JDK — it drives `aapt2` / `d8` / `apksigner`
+directly and falls back to the Eclipse compiler (ECJ) on a JRE-only machine.
+CI does the same on `ubuntu-latest`.
+
+> **Before Play Store upload**: replace `android/keystore/safaridrive-dev.jks`
+> with your own private keystore (the shared dev key is for testing only) and
+> review `android:usesCleartextTraffic` (currently on so operators can point
+> apps at `http://` LAN/staging servers — turn it off for production HTTPS).
+
+---
 
 ## Quickstart
 

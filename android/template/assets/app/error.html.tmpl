@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>{{APP_NAME}} — Offline</title>
+<style>
+  :root { --brand: {{BRAND_COLOR}}; --brand-dark: {{BRAND_COLOR_DARK}}; }
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  body {
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: linear-gradient(160deg, #f6f8f7 0%, #eef2f0 100%);
+    min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px;
+  }
+  .card {
+    width: 100%; max-width: 400px; background: #fff; border-radius: 24px;
+    box-shadow: 0 12px 40px rgba(0,0,0,.10); padding: 40px 28px 28px; text-align: center;
+  }
+  .mark {
+    width: 84px; height: 84px; border-radius: 21px; background: var(--brand);
+    margin: 0 auto 20px; display: flex; align-items: center; justify-content: center;
+  }
+  .mark svg { width: 48px; height: 48px; }
+  h1 { font-size: 21px; color: #1b1f1e; margin-bottom: 8px; }
+  .sub { font-size: 14px; line-height: 1.55; color: #5b6360; margin-bottom: 18px; }
+  .server {
+    font-size: 13px; color: #37413e; background: #f3f6f4; border-radius: 10px;
+    padding: 10px 12px; margin-bottom: 24px; word-break: break-all;
+  }
+  .btns { display: flex; gap: 10px; justify-content: center; }
+  button {
+    font-size: 15px; font-weight: 700; border-radius: 14px; padding: 13px 22px;
+    cursor: pointer; border: 0;
+  }
+  .retry { background: var(--brand); color: #fff; }
+  .retry:active { background: var(--brand-dark); }
+  .change { background: #eef2f0; color: #37413e; }
+  .foot { margin-top: 22px; font-size: 11.5px; color: #9aa19e; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="mark" aria-hidden="true">
+      <svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" fill="none">
+        <circle cx="256" cy="256" r="150" stroke="#fff" stroke-width="22"/>
+        <rect x="240" y="170" width="32" height="120" rx="14" fill="#fff"/>
+        <rect x="240" y="318" width="32" height="46" rx="14" fill="#fff" transform="rotate(35 256 341)"/>
+      </svg>
+    </div>
+    <h1>Can't reach the server</h1>
+    <p class="sub">
+      {{APP_NAME}} could not connect. Check that the server is online and your
+      phone has a connection, then try again.
+    </p>
+    <div class="server" id="last">—</div>
+    <div class="btns">
+      <button class="retry" id="retry">Retry</button>
+      <button class="change" id="change">Change server</button>
+    </div>
+    <p class="foot">{{APP_NAME}} · v{{VERSION_NAME}}</p>
+  </div>
+
+<script>
+  (function () {
+    var ROLE = '{{ROLE_ID}}';
+    var last = '';
+    try { last = localStorage.getItem('sd_last_server') || localStorage.getItem('sd_server') || ''; } catch (e) {}
+    if (last) document.getElementById('last').textContent = last;
+
+    document.getElementById('retry').addEventListener('click', function () {
+      if (last) location.replace(last + '/?app=' + ROLE);
+    });
+    document.getElementById('change').addEventListener('click', function () {
+      location.replace('file:///android_asset/app/setup.html?clear=1');
+    });
+  })();
+</script>
+</body>
+</html>

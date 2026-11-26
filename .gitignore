@@ -51,3 +51,10 @@ Caddyfile
 mini-services/*/node_modules
 mini-services/*/dev.log
 /skills/
+
+# android build intermediates (final APKs in public/apk are committed)
+android/.build/
+android/out/
+android/tools/ecj.jar
+# signing keys are NEVER committed — generated locally per machine / ephemerally in CI
+android/keystore/

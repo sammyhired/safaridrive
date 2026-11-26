@@ -5,8 +5,10 @@
 
 import {
   CarFront,
+  Download,
   Percent,
   Route,
+  Smartphone,
   Users as UsersIcon,
   Wallet,
 } from 'lucide-react'
@@ -20,6 +22,30 @@ import { StatusCountChart, TopVehiclesChart, TrendChart } from '@/components/own
 import { ErrorState } from '@/components/owner/_shared/states'
 import { ChartSkeleton, StatGridSkeleton } from '@/components/owner/_shared/skeletons'
 import { SectionHeader } from '@/components/owner/_shared/section-header'
+
+const APK_VERSION = 'v1.0.0'
+const APK_DOWNLOADS = [
+  {
+    name: 'SafariDrive',
+    href: `/apk/SafariDrive-Customer-${APK_VERSION}.apk`,
+    blurb: 'Customer app — search, book, pay, track',
+  },
+  {
+    name: 'SafariDrive Owner',
+    href: `/apk/SafariDrive-Owner-${APK_VERSION}.apk`,
+    blurb: 'Fleet, yards & payouts console',
+  },
+  {
+    name: 'SafariDrive Driver',
+    href: `/apk/SafariDrive-Driver-${APK_VERSION}.apk`,
+    blurb: 'Chauffeur jobs & navigation',
+  },
+  {
+    name: 'SafariDrive Admin',
+    href: `/apk/SafariDrive-Admin-${APK_VERSION}.apk`,
+    blurb: 'Platform control centre',
+  },
+]
 
 export function OverviewSection() {
   const statsQuery = useAdminStats()
@@ -172,6 +198,36 @@ export function OverviewSection() {
           )}
         </Card>
       </div>
+
+      {/* Mobile apps */}
+      <Card className="gap-3 p-4 sm:p-6">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <CardTitle className="text-base">Mobile apps</CardTitle>
+            <CardDescription className="mt-1 text-xs">
+              Installable Android apps for every side of the platform. Each app asks for this
+              server&rsquo;s address on first launch, then opens straight into its side.
+            </CardDescription>
+          </div>
+          <Smartphone className="h-5 w-5 shrink-0 text-muted-foreground" aria-hidden />
+        </div>
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          {APK_DOWNLOADS.map((app) => (
+            <a
+              key={app.name}
+              href={app.href}
+              download
+              className="group flex flex-col gap-1 rounded-xl border p-3 transition-colors hover:border-primary/40 hover:bg-muted/50"
+            >
+              <span className="text-sm font-semibold group-hover:text-primary">{app.name}</span>
+              <span className="text-xs text-muted-foreground">{app.blurb}</span>
+              <span className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-primary">
+                <Download className="h-3.5 w-3.5" aria-hidden /> Download APK
+              </span>
+            </a>
+          ))}
+        </div>
+      </Card>
     </div>
   )
 }
