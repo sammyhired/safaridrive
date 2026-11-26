@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ThemeProvider } from 'next-themes'
-import { CarFront, Github, MapPin, Smartphone, Wallet } from 'lucide-react'
+import { CarFront, MapPin, Smartphone, Wallet } from 'lucide-react'
 
 import AppHeader from '@/components/shared/app-header'
 import CustomerApp from '@/components/customer'
@@ -31,7 +31,7 @@ function SiteFooter() {
   return (
     <footer className="mt-auto border-t bg-muted/40">
       <div className="container mx-auto max-w-7xl px-4 py-8">
-        <div className="grid gap-8 md:grid-cols-4">
+        <div className="grid gap-8 md:grid-cols-3">
           <div className="space-y-2">
             <div className="flex items-center gap-2">
               <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
@@ -70,23 +70,11 @@ function SiteFooter() {
               </li>
             </ul>
           </div>
-          <div>
-            <h3 className="mb-2 text-sm font-semibold">Open-source stack</h3>
-            <ul className="space-y-1.5 text-sm text-muted-foreground">
-              <li>Next.js · TypeScript · Tailwind</li>
-              <li>Leaflet + OpenStreetMap maps</li>
-              <li>Traccar-compatible GPS ingest</li>
-              <li>Prisma + SQLite · Recharts</li>
-            </ul>
-          </div>
         </div>
-        <div className="mt-8 flex flex-col items-center justify-between gap-3 border-t pt-4 text-xs text-muted-foreground sm:flex-row">
+        <div className="mt-8 border-t pt-4 text-xs text-muted-foreground">
           <p>
             © {new Date().getFullYear()} {BRAND.name}. Built as an open, two-sided rental
             platform for East Africa.
-          </p>
-          <p className="flex items-center gap-1">
-            <Github className="h-3.5 w-3.5" aria-hidden /> Free and open-source software
           </p>
         </div>
       </div>
