@@ -2,15 +2,18 @@ name: Android APKs
 
 on:
   push:
-    paths:
-      - "android/**"
-      - ".github/workflows/android-apks.yml"
+    branches:
+      - main
+    tags:
+      - "v*"
   workflow_dispatch:
 
 jobs:
   build:
     name: Build the four side apps
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -35,3 +38,14 @@ jobs:
           name: safaridrive-apks
           path: android/out/*.apk
           if-no-files-found: error
+
+      # Free distribution: publish every version tag as a GitHub Release.
+      # Users install directly from:
+      #   https://github.com/sammyhired/safaridrive/releases
+      # APKs download without a GitHub account.
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: android/out/*.apk

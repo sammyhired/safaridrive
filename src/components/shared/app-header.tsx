@@ -15,6 +15,7 @@ import {
   Moon,
   Navigation,
   ShieldCheck,
+  Smartphone,
   Sun,
 } from 'lucide-react'
 
@@ -31,6 +32,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Skeleton } from '@/components/ui/skeleton'
 import { EmptyState } from '@/components/shared/empty-state'
+import GetAppDialog from '@/components/shared/get-app-dialog'
 import LoginDialog from '@/components/shared/login-dialog'
 import { useToast } from '@/hooks/use-toast'
 import { useSession } from '@/hooks/use-session'
@@ -344,6 +346,7 @@ export default function AppHeader({
 }) {
   const { user, isLoading } = useSession()
   const [loginOpen, setLoginOpen] = useState(false)
+  const [getAppOpen, setGetAppOpen] = useState(false)
 
   return (
     <header className="sticky top-0 z-40 w-full border-b bg-background/95 backdrop-blur">
@@ -356,6 +359,15 @@ export default function AppHeader({
         </nav>
 
         <div className="ml-auto flex items-center gap-1 md:ml-0">
+          <Button
+            variant="ghost"
+            className="h-11 gap-1.5 px-3"
+            aria-label="Get the Android apps"
+            onClick={() => setGetAppOpen(true)}
+          >
+            <Smartphone className="size-4" aria-hidden />
+            <span className="hidden sm:inline">Get app</span>
+          </Button>
           <ThemeToggle />
           {user ? <NotificationBell /> : null}
           {isLoading ? (
@@ -383,6 +395,7 @@ export default function AppHeader({
       </nav>
 
       <LoginDialog open={loginOpen} onOpenChange={setLoginOpen} />
+      <GetAppDialog open={getAppOpen} onOpenChange={setGetAppOpen} role={roleView} />
     </header>
   )
 }

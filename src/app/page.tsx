@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ThemeProvider } from 'next-themes'
-import { CarFront, MapPin, Smartphone, Wallet } from 'lucide-react'
+import { CarFront, Download, MapPin, Smartphone, Wallet } from 'lucide-react'
 
 import AppHeader from '@/components/shared/app-header'
 import CustomerApp from '@/components/customer'
@@ -72,7 +72,29 @@ function SiteFooter() {
           </div>
         </div>
         <div className="mt-8 border-t pt-4 text-xs text-muted-foreground">
-          <p>
+          <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
+            <Smartphone className="size-3.5 shrink-0" aria-hidden />
+            <span className="font-medium text-foreground">Android apps:</span>
+            {[
+              ['Customer', 'SafariDrive-Customer-v1.0.0.apk'],
+              ['Owner', 'SafariDrive-Owner-v1.0.0.apk'],
+              ['Driver', 'SafariDrive-Driver-v1.0.0.apk'],
+              ['Admin', 'SafariDrive-Admin-v1.0.0.apk'],
+            ].map(([label, file], i) => (
+              <span key={file} className="flex items-center gap-1.5">
+                {i > 0 ? <span aria-hidden>·</span> : null}
+                <a
+                  href={`/apk/${file}`}
+                  download
+                  className="inline-flex items-center gap-1 rounded hover:text-foreground hover:underline"
+                >
+                  <Download className="size-3" aria-hidden />
+                  {label}
+                </a>
+              </span>
+            ))}
+          </p>
+          <p className="mt-2">
             © {new Date().getFullYear()} {BRAND.name}. Built as an open, two-sided rental
             platform for East Africa.
           </p>

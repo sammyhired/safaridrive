@@ -113,16 +113,33 @@ side via `/?app=<role>` and remembers it. If the server is unreachable the app
 shows an offline screen with retry / change-server actions. Location permission
 is requested on first use so the maps and "near me" features work inside the shell.
 
-Signed APKs are served by the platform itself at **`/apk/`** (e.g.
-`/apk/SafariDrive-Owner-v1.0.0.apk`) and rebuilt on every push by the
-`Android APKs` GitHub Action (download from the run's *Artifacts*).
+Signed APKs are distributed **free** through two channels:
+
+1. **This site itself** — served at `/apk/` (e.g. `/apk/SafariDrive-Owner-v1.0.0.apk`).
+   The header's **“Get app”** button opens a dialog with per-role download cards, a
+   scannable **QR code** (so desktop users can beam the download to a phone), the
+   server address to paste on first launch, and step-by-step install instructions.
+   The footer also links all four APKs.
+2. **GitHub Releases** — pushing a version tag (`git tag v1.0.0 && git push origin
+   v1.0.0`) makes the `Android APKs` workflow build and publish all four APKs to
+   [github.com/sammyhired/safaridrive/releases](https://github.com/sammyhired/safaridrive/releases).
+   Anyone can install from there — no GitHub account, no fee. Direct-link pattern:
+   `…/releases/latest/download/SafariDrive-Customer-v1.0.0.apk`.
+
+> **Store comparison**: GitHub Releases and self-hosting are free forever. F-Droid
+> / IzzyOnDroid are free open-source stores but impose review requirements (and a
+> WebView shell pointed at a user-supplied server may not qualify). Google Play is
+> **not free**: $25 one-time registration, new personal accounts need a 14-day
+> closed test with 12 testers, and submissions must be AAB (not APK) — our
+> `build.sh` pipeline would need an AAB target first.
 
 ### Installing on a phone
-1. Open the platform in the phone's browser and tap an APK link under `/apk/`
-   (or download from GitHub Actions artifacts).
+1. On the phone's browser, open the platform and tap **Get app** (header) or an
+   APK link in the footer — or scan the QR code shown in the dialog from a
+   desktop (also: GitHub Releases links above).
 2. Allow "install unknown apps" for your browser when prompted — the APKs are
    self-signed.
-3. Open the app, enter your server address, done.
+3. Open the app, paste the server address shown in the dialog, done.
 
 ### Rebuilding from source
 ```bash
