@@ -1,0 +1,15 @@
+{
+  "name": "safaridrive-tracking",
+  "version": "1.0.0",
+  "private": true,
+  "description": "SafariDrive GPS tracking + trip simulation service (OSMAND/Traccar-compatible ingest, socket.io live positions)",
+  "scripts": {
+    "dev": "bun --hot index.ts"
+  },
+  "dependencies": {
+    "socket.io": "^4.8.1"
+  },
+  "devDependencies": {
+    "socket.io-client": "^4.8.1"
+  }
+}

@@ -1,0 +1,53 @@
+# dependencies
+node_modules
+/.pnp
+.pnp.*
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
+
+# env files - never commit secrets
+.env
+.env.*
+!.env.example
+
+# database (regenerate with db:push + seed)
+db/*.db
+db/*.db-journal
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# local tooling / sandbox artifacts
+.claude
+.z-ai-config
+local-*
+.zscripts/
+tool-results/
+.images-tmp/
+agent-ctx/
+tests/
+download/
+Caddyfile
+mini-services/*/node_modules
+mini-services/*/dev.log
+/skills/

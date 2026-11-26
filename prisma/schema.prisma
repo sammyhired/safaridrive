@@ -1,0 +1,205 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// NOTE: SQLite does not support Prisma enums — all enum-like fields are
+// String columns validated in application code (see src/lib/types.ts).
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  phone        String?
+  role         String   @default("CUSTOMER") // CUSTOMER | OWNER | DRIVER | ADMIN
+  status       String   @default("ACTIVE") // ACTIVE | SUSPENDED
+  nationalId   String?
+  licenseNo    String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  vehicles      Vehicle[]       @relation("vehicleOwner")
+  bookings      Booking[]       @relation("bookingCustomer")
+  driverProfile Driver?
+  notifications Notification[]
+  reviewsGiven  Review[]        @relation("reviewAuthor")
+}
+
+model RentalYard {
+  id        String  @id @default(cuid())
+  name      String
+  city      String
+  address   String
+  lat       Float
+  lng       Float
+  openHours String  @default("Mon - Sun, 7:00am - 8:00pm")
+  phone     String
+  vehicles  Vehicle[]
+  pickups   Booking[] @relation("BookingPickupYard")
+}
+
+model Vehicle {
+  id                   String   @id @default(cuid())
+  ownerId              String
+  owner                User     @relation("vehicleOwner", fields: [ownerId], references: [id])
+  yardId               String?
+  yard                 RentalYard? @relation(fields: [yardId], references: [id])
+  make                 String
+  model                String
+  year                 Int
+  category             String // ECONOMY | SALOON | SUV | FOUR_BY_FOUR | VAN | LUXURY | EXECUTIVE
+  plate                String   @unique
+  seats                Int
+  doors                Int      @default(4)
+  transmission         String   @default("Automatic") // Manual | Automatic
+  fuelType             String   @default("Petrol") // Petrol | Diesel | Hybrid
+  dailyRate            Int // KES per day
+  securityDeposit      Int      @default(5000) // KES, refundable
+  mileageLimitKmPerDay Int? // null = unlimited
+  excessPerKm          Int      @default(50) // KES per km over limit
+  imageUrl             String
+  features             String   @default("") // comma-separated
+  description          String?
+  status               String   @default("AVAILABLE") // AVAILABLE | BOOKED | MAINTENANCE | RETIRED
+  rating               Float    @default(0)
+  reviewCount          Int      @default(0)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  bookings  Booking[]
+  expenses  Expense[]
+  positions VehiclePosition[]
+}
+
+model Driver {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id])
+  licenseNo       String
+  yearsExperience Int      @default(3)
+  dailyRate       Int      @default(2500) // KES per day for chauffeur service
+  status          String   @default("AVAILABLE") // AVAILABLE | ON_TRIP | OFFLINE
+  rating          Float    @default(0)
+  tripsCompleted  Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  bookings Booking[]
+}
+
+model Booking {
+  id              String   @id @default(cuid())
+  reference       String   @unique // e.g. SD-8F3K2Q
+  customerId      String
+  customer        User     @relation("bookingCustomer", fields: [customerId], references: [id])
+  vehicleId       String
+  vehicle         Vehicle  @relation(fields: [vehicleId], references: [id])
+  driverId        String?
+  driver          Driver?  @relation(fields: [driverId], references: [id])
+  mode            String // PICKUP | DELIVERY | CHAUFFEUR
+  status          String   @default("PENDING_PAYMENT") // PENDING_PAYMENT | PAID | ACCEPTED | REJECTED | CANCELLED | OUT_FOR_DELIVERY | ACTIVE | RETURNED | COMPLETED
+  paymentStatus   String   @default("UNPAID") // UNPAID | PAID | REFUNDED
+  startDate       DateTime
+  endDate         DateTime
+  days            Int
+  pickupYardId    String
+  pickupYard      RentalYard @relation("BookingPickupYard", fields: [pickupYardId], references: [id])
+  deliveryAddress String?
+  deliveryLat     Float?
+  deliveryLng     Float?
+  distanceKm      Float?
+  rentalTotal     Int
+  deliveryFee     Int      @default(0)
+  driverTotal     Int      @default(0)
+  extrasTotal     Int      @default(0)
+  discount        Int      @default(0)
+  deposit         Int      @default(0)
+  total           Int // payable amount = rental + delivery + driver + extras - discount
+  extrasJson      String   @default("[]") // JSON array of {key, label, qty, amount}
+  promoCode       String?
+  cancelReason    String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  payments Payment[]
+  reviews Review[]
+}
+
+model Payment {
+  id               String   @id @default(cuid())
+  bookingId        String
+  booking          Booking  @relation(fields: [bookingId], references: [id])
+  method           String // MPESA | CARD
+  type             String   @default("RENTAL") // RENTAL | DEPOSIT
+  phone            String?
+  amount           Int
+  status           String   @default("PENDING") // PENDING | COMPLETED | FAILED | REFUNDED
+  merchantRequestId  String?
+  checkoutRequestId String?
+  receiptNo        String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+model Review {
+  id        String   @id @default(cuid())
+  bookingId String   @unique
+  booking   Booking  @relation(fields: [bookingId], references: [id])
+  authorId  String
+  author    User     @relation("reviewAuthor", fields: [authorId], references: [id])
+  rating    Int // 1 - 5
+  comment   String?
+  createdAt DateTime @default(now())
+}
+
+model PromoCode {
+  id          String    @id @default(cuid())
+  code        String    @unique
+  description String
+  percentOff  Int?
+  amountOff   Int?
+  active      Boolean   @default(true)
+  expiresAt   DateTime?
+  createdAt   DateTime  @default(now())
+}
+
+model Expense {
+  id        String   @id @default(cuid())
+  vehicleId String
+  vehicle   Vehicle  @relation(fields: [vehicleId], references: [id])
+  category  String // FUEL | SERVICE | INSURANCE | REPAIR | OTHER
+  amount    Int
+  note      String?
+  date      DateTime @default(now())
+  createdAt DateTime @default(now())
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  title     String
+  body      String
+  type      String   @default("SYSTEM") // BOOKING | PAYMENT | TRIP | SYSTEM
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model VehiclePosition {
+  id        String   @id @default(cuid())
+  vehicleId String
+  vehicle   Vehicle  @relation(fields: [vehicleId], references: [id])
+  bookingId String?
+  lat       Float
+  lng       Float
+  speed     Float    @default(0)
+  heading   Float    @default(0)
+  recordedAt DateTime @default(now())
+
+  @@index([vehicleId, recordedAt])
+}
