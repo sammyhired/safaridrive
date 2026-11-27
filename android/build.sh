@@ -64,9 +64,12 @@ fi
 # ---- Keystore (shared dev key; replace before Play Store upload — see README) ----
 if [ ! -f "$KS" ]; then
   echo "build: generating dev keystore"
+  # android/keystore/ is gitignored, so fresh checkouts (CI) don't have it yet
+  mkdir -p "$(dirname "$KS")"
   keytool -genkeypair -keystore "$KS" -alias "$KS_ALIAS" -keyalg RSA -keysize 2048 \
     -validity 10950 -storepass "$KS_PASS" -keypass "$KS_PASS" \
-    -dname "CN=SafariDrive, OU=Mobile, O=SafariDrive, L=Nairobi, C=KE" >/dev/null 2>&1
+    -dname "CN=SafariDrive, OU=Mobile, O=SafariDrive, L=Nairobi, C=KE" \
+    || die "keytool failed to generate the dev keystore"
 fi
 
 # ---- Read variants.json -> tab-separated records ----
