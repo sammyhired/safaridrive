@@ -83,6 +83,7 @@ export function serializePayment(p: Payment): PaymentSummary {
     method: p.method as PaymentSummary['method'],
     type: p.type as PaymentSummary['type'],
     amount: p.amount,
+    refundedAmount: p.refundedAmount ?? null,
     status: p.status as PaymentSummary['status'],
     phone: p.phone,
     receiptNo: p.receiptNo,
@@ -164,6 +165,20 @@ export function parseExtrasJson(json: string): BookingExtrasItem[] {
   } catch {
     return []
   }
+}
+
+/**
+ * Role-aware booking serialization: a CUSTOMER receives their assigned
+ * chauffeur's name + phone (a legitimate contact need) but NOT the license
+ * number — licenseNo is fleet-manager PII per the /api/drivers policy in
+ * src/lib/types.ts. Owners, the driver themselves and admins keep it.
+ */
+export function serializeBookingFor(b: BookingRow, viewerRole: string): Booking {
+  const base = serializeBooking(b)
+  if (viewerRole === 'CUSTOMER' && base.driver) {
+    return { ...base, driver: { ...base.driver, licenseNo: null } }
+  }
+  return base
 }
 
 // ---------- Reviews ----------

@@ -115,9 +115,14 @@ export async function initiateStkPush(
   amount: number,
   accountReference: string,
 ): Promise<StkPushResult> {
-  const mode = (process.env.MPESA_MODE ?? 'mock').toLowerCase()
+  const mode = (process.env.MPESA_MODE ?? 'mock').trim().toLowerCase()
   if (mode === 'daraja') {
     return darajaStkPush(phone, amount, accountReference)
+  }
+  if (mode !== 'mock') {
+    // Fail closed on a typo'd MPESA_MODE (e.g. "Daraja ") instead of
+    // silently serving simulated STK pushes in a production deployment.
+    throw new Error('Invalid MPESA_MODE — must be "mock" or "daraja"')
   }
   return mockStkPush()
 }

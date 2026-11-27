@@ -25,10 +25,48 @@ const MAX_BODY_BYTES = 256 * 1024
 const buckets = new Map<string, Bucket>()
 let lastPrune = 0
 
-function prune(now: number): void {
-  if (now - lastPrune < 30_000) return
+// Hard cap on live rate-limit buckets: a sprayed attack with many unique
+// paths/IPs can never grow the map without bound (defense against the
+// bucket-map memory-DoS class).
+const MAX_BUCKETS = 50_000
+
+function prune(now: number, force = false): void {
+  if (!force && now - lastPrune < 30_000) return
   lastPrune = now
   for (const [k, b] of buckets) if (b.resetAt <= now) buckets.delete(k)
+}
+
+/**
+ * Normalize a path for LIMIT-KEY purposes only (tier matching above still
+ * uses the real path): any segment that is not one of our static route
+ * segments — dynamic IDs, random garbage — collapses to ":id". Spraying
+ * /api/bookings/<unique-id> or /api/<random> therefore lands in ONE bucket
+ * per IP instead of a fresh bucket per request (which would multiply the
+ * effective limit and spray the bucket map). Unknown future routes collapse
+ * too — a safe-by-default (tighter) choice until this list is extended.
+ */
+const STATIC_SEGMENTS = new Set([
+  'api',
+  'auth', 'login', 'register', 'logout', 'me',
+  'bookings', 'quote',
+  'categories',
+  'drivers',
+  'expenses',
+  'notifications', 'read-all',
+  'payments', 'card', 'mpesa', 'callback', 'stk',
+  'promo', 'validate', 'promos',
+  'reviews',
+  'stats', 'admin', 'owner', 'driver',
+  'tracking',
+  'users',
+  'vehicles',
+  'yards',
+])
+
+function normalizeKeyPath(pathname: string): string {
+  const segs = pathname.split('?')[0].split('/').filter(Boolean)
+  const masked = segs.map((s) => (STATIC_SEGMENTS.has(s) ? s : ':id'))
+  return '/' + masked.join('/')
 }
 
 function clientIp(req: NextRequest): string {
@@ -72,7 +110,7 @@ function tier(path: string, method: string): { limit: number; windowMs: number }
     return { limit: 120, windowMs: 5 * 60_000 }
   }
   if (method === 'GET' || method === 'HEAD') {
-    return { limit: 400, windowMs: 5 * 60_000 }
+    return { limit: 600, windowMs: 5 * 60_000 }
   }
   return { limit: 120, windowMs: 5 * 60_000 }
 }
@@ -116,8 +154,14 @@ export function proxy(req: NextRequest) {
   // ---- 3. Rate limiting ----
   const now = Date.now()
   prune(now)
+  if (buckets.size > MAX_BUCKETS) {
+    // Emergency sweep: drop every expired bucket, and if the map is still
+    // oversized (a spray attack), reset it wholesale — bounded memory wins.
+    prune(now, true)
+    if (buckets.size > MAX_BUCKETS) buckets.clear()
+  }
   const { limit, windowMs } = tier(pathname, method)
-  const key = `${clientIp(req)}:${method === 'GET' || method === 'HEAD' ? 'r' : 'w'}:${pathname}`
+  const key = `${clientIp(req)}:${method === 'GET' || method === 'HEAD' ? 'r' : 'w'}:${normalizeKeyPath(pathname)}`
   const existing = buckets.get(key)
   let count: number
   let resetAt: number

@@ -74,8 +74,13 @@ async function isSecureRequest(): Promise<boolean> {
 }
 
 export async function createSession(userId: string): Promise<void> {
+  // Bind the token to the user's current session epoch: bumping the epoch
+  // (admin suspend / future password change) instantly revokes every cookie
+  // minted before the bump.
+  const user = await db.user.findUnique({ where: { id: userId }, select: { sessionEpoch: true } })
+  const epoch = user?.sessionEpoch ?? 0
   const exp = Math.floor(Date.now() / 1000) + SESSION_MAX_AGE
-  const payload = Buffer.from(JSON.stringify({ userId, exp }), 'utf8').toString('base64url')
+  const payload = Buffer.from(JSON.stringify({ userId, epoch, exp }), 'utf8').toString('base64url')
   const token = `${payload}.${sign(payload)}`
   const store = await cookies()
   store.set(SESSION_COOKIE, token, {
@@ -109,7 +114,7 @@ export async function getSessionUser(): Promise<SessionUser | null> {
   if (!payload || !signature) return null
   if (!safeEqual(signature, sign(payload))) return null
 
-  let data: { userId?: unknown; exp?: unknown }
+  let data: { userId?: unknown; epoch?: unknown; exp?: unknown }
   try {
     data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'))
   } catch {
@@ -117,9 +122,13 @@ export async function getSessionUser(): Promise<SessionUser | null> {
   }
   if (typeof data.userId !== 'string' || !data.userId) return null
   if (typeof data.exp !== 'number' || data.exp * 1000 < Date.now()) return null
+  // Tokens minted before the user's current epoch are revoked (pre-epoch
+  // tokens without the field are also rejected — one-time global logout).
+  if (typeof data.epoch !== 'number') return null
 
   const user = await db.user.findFirst({ where: { id: data.userId, status: 'ACTIVE' } })
   if (!user) return null
+  if (data.epoch !== user.sessionEpoch) return null
   if (!ROLES.includes(user.role as Role)) return null
   return {
     id: user.id,

@@ -14,7 +14,7 @@ import {
   requireString,
   vehicleLabel,
 } from '@/app/api/_lib/api'
-import { bookingInclude, serializeBooking, type BookingRow } from '@/app/api/_lib/serialize'
+import { bookingInclude, serializeBookingFor, type BookingRow } from '@/app/api/_lib/serialize'
 
 type Ctx = { params: Promise<{ id: string }> }
 
@@ -50,10 +50,32 @@ async function releaseVehicleIfFree(tx: Tx, vehicleId: string, excludeBookingId:
   }
 }
 
-async function refundCompletedPayments(tx: Tx, bookingId: string): Promise<void> {
-  await tx.payment.updateMany({
+async function refundCompletedPayments(tx: Tx, bookingId: string, retainedFee = 0): Promise<void> {
+  // Mark completed payments refunded, recording how much of each amount is
+  // actually returned (retainedFee — e.g. a late-cancellation penalty — is
+  // withheld from the rental payment, never exceeding its amount).
+  const completed = await tx.payment.findMany({
     where: { bookingId, status: 'COMPLETED' },
-    data: { status: 'REFUNDED' },
+    orderBy: { createdAt: 'asc' },
+  })
+  let feeLeft = retainedFee
+  for (const p of completed) {
+    const retain = Math.min(feeLeft, p.amount)
+    feeLeft -= retain
+    await tx.payment.update({
+      where: { id: p.id },
+      data: { status: 'REFUNDED', refundedAmount: p.amount - retain },
+    })
+  }
+}
+
+/** Return a burned promo use when an UNPAID booking is cancelled. */
+async function releasePromoUse(tx: Tx, promoCode: string | null): Promise<void> {
+  if (!promoCode) return
+  // Conditional decrement: never drops below zero
+  await tx.promoCode.updateMany({
+    where: { code: promoCode, usedCount: { gt: 0 } },
+    data: { usedCount: { decrement: 1 } },
   })
 }
 
@@ -70,7 +92,7 @@ export async function GET(_req: Request, ctx: Ctx) {
     if (!isCustomer && !isOwner && !isDriver && user.role !== 'ADMIN') {
       throw new ApiError(403, 'You do not have access to this booking')
     }
-    return NextResponse.json({ booking: serializeBooking(booking) })
+    return NextResponse.json({ booking: serializeBookingFor(booking, user.role) })
   })
 }
 
@@ -163,17 +185,25 @@ export async function PATCH(req: Request, ctx: Ctx) {
 
           const hoursToStart = (booking.startDate.getTime() - Date.now()) / 3_600_000
           const paid = booking.paymentStatus === 'PAID'
+          const withinFeeWindow = hoursToStart < CANCEL_FREE_HOURS
           if (paid) {
             data.paymentStatus = 'REFUNDED'
-            await refundCompletedPayments(tx, booking.id)
-          }
-          if (hoursToStart >= CANCEL_FREE_HOURS) {
-            data.cancelReason = `Cancelled ${Math.round(hoursToStart)}h before start — free cancellation${reason ? ` — ${reason}` : ''}`
+            // The late-cancellation fee is actually withheld (not just
+            // announced): the rental payment is refunded minus the fee.
+            const fee = withinFeeWindow ? Math.round(booking.total * CANCEL_FEE_RATE) : 0
+            await refundCompletedPayments(tx, booking.id, fee)
           } else {
+            // Never-paid booking: give the burned promo use back so unpaid
+            // create-then-cancel cycles cannot exhaust a campaign's quota.
+            await releasePromoUse(tx, booking.promoCode)
+          }
+          if (withinFeeWindow) {
             const fee = Math.round(booking.total * CANCEL_FEE_RATE)
             data.cancelReason =
               `Cancelled ${Math.max(0, Math.round(hoursToStart))}h before start — 20% fee applies ` +
               `(KSh ${fee.toLocaleString('en-KE')} retained)${reason ? ` — ${reason}` : ''}`
+          } else {
+            data.cancelReason = `Cancelled ${Math.round(hoursToStart)}h before start — free cancellation${reason ? ` — ${reason}` : ''}`
           }
           await releaseVehicleIfFree(tx, booking.vehicleId, booking.id)
           simQueue.push({ kind: 'stop', bookingId: booking.id })
@@ -352,6 +382,6 @@ export async function PATCH(req: Request, ctx: Ctx) {
       else await startTripSim(op.payload)
     }
 
-    return NextResponse.json({ booking: serializeBooking(updated) })
+    return NextResponse.json({ booking: serializeBookingFor(updated, user.role) })
   })
 }

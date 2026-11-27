@@ -15,7 +15,9 @@ type PaymentRow = Prisma.PaymentGetPayload<{ include: { booking: { include: { ve
  *
  * Atomic: the PENDING → COMPLETED flip is a conditional updateMany, so two
  * racing callers (e.g. card POST + STK callback) can never both transition
- * the booking — the loser returns the already-completed payment unchanged.
+ * the booking. If two DISTINCT payments race and the booking was already
+ * settled by the winner, the loser is voided (FAILED) instead of being
+ * recorded as a second COMPLETED charge — no silent double-billing.
  */
 export async function completePayment(
   paymentId: string,
@@ -30,8 +32,14 @@ export async function completePayment(
     })
     if (!existing) throw new Error('Payment not found')
 
-    // Idempotent: another caller already finished this payment
-    if (existing.status === 'COMPLETED' || existing.status === 'REFUNDED') {
+    // Idempotent: another caller already finished (or voided) this payment.
+    // FAILED is terminal — a late callback for a superseded STK attempt can
+    // never resurrect it to COMPLETED.
+    if (
+      existing.status === 'COMPLETED' ||
+      existing.status === 'REFUNDED' ||
+      existing.status === 'FAILED'
+    ) {
       return existing
     }
 
@@ -69,6 +77,21 @@ export async function completePayment(
         title: 'New paid booking',
         body: `Booking ${booking.reference} for ${vehicleLabel(booking.vehicle)} has been paid by ${booking.customer.name} — awaiting your acceptance.`,
       })
+    } else if (existing.type === 'RENTAL') {
+      // This payment's claim succeeded but the booking was ALREADY paid by a
+      // different payment (e.g. a card POST racing an STK callback). Void
+      // this loser instead of recording a second completed charge — the
+      // customer is not double-billed in the ledger, and ops can reconcile
+      // the real captured money via the receipt number.
+      await tx.payment.update({
+        where: { id: paymentId },
+        data: { status: 'FAILED' },
+      })
+      const voided = await tx.payment.findUnique({
+        where: { id: paymentId },
+        include: { booking: { include: { vehicle: true, customer: true } } },
+      })
+      return voided ?? existing
     }
 
     return tx.payment.findUnique({

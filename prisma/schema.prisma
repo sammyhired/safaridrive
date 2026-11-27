@@ -18,6 +18,10 @@ model User {
   phone        String?
   role         String   @default("CUSTOMER") // CUSTOMER | OWNER | DRIVER | ADMIN
   status       String   @default("ACTIVE") // ACTIVE | SUSPENDED
+  // Incremented to revoke every live session for this user (admin suspend,
+  // future password change). Session tokens embed the epoch they were minted
+  // with; a mismatch invalidates the cookie immediately.
+  sessionEpoch Int      @default(0)
   nationalId   String?
   licenseNo    String?
   createdAt    DateTime @default(now())
@@ -139,6 +143,9 @@ model Payment {
   phone            String?
   amount           Int
   status           String   @default("PENDING") // PENDING | COMPLETED | FAILED | REFUNDED
+  // How much of `amount` was actually returned on refund (differs from
+  // amount when a cancellation fee is retained). null while not refunded.
+  refundedAmount   Int?
   merchantRequestId  String?
   checkoutRequestId String?
   receiptNo        String?

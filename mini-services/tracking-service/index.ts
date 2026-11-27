@@ -841,14 +841,10 @@ async function handleRest(req: IncomingMessage, res: ServerResponse): Promise<vo
       return
     }
 
-    // --- health ---
+    // --- health (intentionally minimal: no service identity, no trip counts ---
+    // --- — unauthenticated callers must learn nothing beyond "up") ---
     if (path === '/health' && method === 'GET') {
-      return sendJson(res, 200, {
-        ok: true,
-        service: 'safaridrive-tracking',
-        activeTrips: countActive(),
-        time: nowIso(),
-      })
+      return sendJson(res, 200, { ok: true })
     }
 
     // --- simulation control (platform backend only) ---
@@ -1025,7 +1021,34 @@ function extractBookingId(data: unknown): string | null {
   return null
 }
 
+// ------------------------------ connection caps ------------------------------
+// Unauthenticated sockets are cheap to open; without caps a flood of
+// connections can exhaust file descriptors / memory even though every one
+// of them fails the join-trip token check. Per-IP limit uses the gateway's
+// X-Forwarded-For / X-Real-IP (the gateway overwrites both with the real
+// client address, so they cannot be spoofed through it; direct callers are
+// loopback-only by default — BIND_HOST).
+const MAX_SOCKETS_PER_IP = 10
+const MAX_TOTAL_SOCKETS = 500
+const socketsPerIp = new Map<string, Set<Socket>>()
+
+function clientIpOf(socket: Socket): string {
+  const h = socket.handshake.headers
+  const xff = typeof h['x-forwarded-for'] === 'string' ? h['x-forwarded-for'].split(',')[0].trim() : ''
+  const real = typeof h['x-real-ip'] === 'string' ? (h['x-real-ip'] as string).trim() : ''
+  return xff || real || socket.handshake.address || 'unknown'
+}
+
 io.on('connection', (socket: Socket) => {
+  const ip = clientIpOf(socket)
+  const perIp = socketsPerIp.get(ip)
+  if ((perIp ? perIp.size : 0) >= MAX_SOCKETS_PER_IP || io.sockets.sockets.size > MAX_TOTAL_SOCKETS) {
+    warn(`socket ${socket.id} from ${ip} rejected: connection cap reached`)
+    socket.disconnect(true)
+    return
+  }
+  if (perIp) perIp.add(socket)
+  else socketsPerIp.set(ip, new Set([socket]))
   log(`socket connected ${socket.id}`)
   // Per-socket join attempts: a client may not brute-force join tokens
   let joinAttempts: number[] = []
@@ -1083,6 +1106,11 @@ io.on('connection', (socket: Socket) => {
   socket.on('error', (err: Error) => warn(`socket ${socket.id} error: ${err.message}`))
   socket.on('disconnect', (reason: string) => {
     // Room memberships are cleaned up automatically by socket.io.
+    const perIp = socketsPerIp.get(ip)
+    if (perIp) {
+      perIp.delete(socket)
+      if (perIp.size === 0) socketsPerIp.delete(ip)
+    }
     log(`socket disconnected ${socket.id} (${reason})`)
   })
 })

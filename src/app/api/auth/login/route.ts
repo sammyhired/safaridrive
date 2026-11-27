@@ -14,8 +14,16 @@ export async function POST(req: Request) {
 
     const user = await db.user.findUnique({ where: { email } })
     // Single generic failure for every reason (no user / wrong password /
-    // suspended / unknown role) — prevents account enumeration.
-    const ok = user ? await verifyPassword(password, user.passwordHash) : false
+    // suspended / unknown role) — prevents account enumeration. The dummy
+    // verify for missing users equalizes the timing side-channel too.
+    let ok = false
+    if (user) {
+      ok = await verifyPassword(password, user.passwordHash)
+    } else {
+      // Consume comparable scrypt time so "no such user" is not measurably
+      // faster than "wrong password" (email enumeration via latency).
+      await verifyPassword(password, 'malformed-hash')
+    }
     const allowed = ok && user !== null && user.status === 'ACTIVE' && ROLES.includes(user.role as Role)
     if (!allowed || !user) {
       throw new ApiError(401, 'Invalid email or password')

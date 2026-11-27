@@ -178,23 +178,37 @@ backend), so every layer assumes the other side may be hostile:
 
 | Layer | Controls |
 |---|---|
-| Sessions | HMAC-SHA256 `httpOnly` cookie with embedded expiry, `SameSite=Lax`, `secure` behind https; scrypt password hashing (timing-safe compares); single generic login failure (no account enumeration); 7-day max session |
-| API surface | Every route authenticates and re-checks **object ownership** (booking/payment/tracking access limited to that booking's customer, its owner, its driver, or admin); server-side price recomputation on every booking/payment — client totals are never trusted |
-| Payments | M-Pesa Daraja adapter; the demo callback protocol is accepted **only** in mock mode outside production and only from the paying customer's own session — a leaked `checkoutRequestId` alone can no longer complete a payment; in daraja mode only the official `stkCallback` shape is processed, optionally gated by `MPESA_CALLBACK_SECRET`; payment completion is atomic (conditional `updateMany`) so racing card/STK callers can never double-complete |
+| Sessions | HMAC-SHA256 `httpOnly` cookie with embedded expiry, `SameSite=Lax`, `secure` behind https; scrypt password hashing (timing-safe compares, and a dummy scrypt on unknown emails so login latency cannot enumerate accounts); single generic login failure; **epoch-bound tokens** — every cookie embeds the user's `sessionEpoch`, and admin suspend/reactivate bumps the epoch, revoking every live session for that user instantly (a reactivated user's old stolen cookies stay dead) |
+| API surface | Every route authenticates and re-checks **object ownership** (booking/payment/tracking access limited to that booking's customer, its owner, its driver, or admin); server-side price recomputation on every booking/payment — client totals are never trusted; list endpoints hard-capped (bookings 500, vehicles 200) so no session can pull unbounded table dumps |
+| Payments | M-Pesa Daraja adapter with a **fail-closed callback matrix**: only the official `stkCallback` shape is accepted in daraja mode, and `MPESA_CALLBACK_SECRET` is **required** in daraja mode (no secret configured = callbacks refused; secret compared timing-safely and accepted only via the `x-callback-secret` header, never a query string); the demo callback protocol is accepted **only** in mock mode outside production and only from the paying customer's own session; a typo'd `MPESA_MODE` is rejected instead of falling back to the mock. The card gateway is a simulation — hard-disabled in production unless `CARD_MOCK_ENABLED=true`. `completePayment` is atomic: the same payment can never complete twice, a **duplicate** payment for an already-settled booking is voided (FAILED) instead of double-billing, and FAILED attempts are terminal (a late callback cannot resurrect them); cancellation genuinely withholds the 20% late-cancellation fee (`refundedAmount` records what was actually returned) and unpaid cancels return the burned promo use |
 | Booking integrity | Booking creation, availability checks, chauffeur overlap and promo burn run in a single transaction (no double-booking races); booking state transitions run transactionally — notifications and tracking calls fire only after the new status is durable; `complete` releases the vehicle only when no other blocking booking holds it |
-| Rate limiting | Tiered per-IP limits in `src/proxy.ts` (Next 16 proxy convention) — 10/5min for auth, 30/5min for payments, 90/5min for quotes (429 + `Retry-After`), plus a 256 KB request-body guard before any handler parses |
+| Rate limiting | Tiered per-IP limits in `src/proxy.ts` (Next 16 proxy convention) — 10/5min for auth, 30/5min for payments, 90/5min for quotes (429 + `Retry-After`), plus a 256 KB request-body guard before any handler parses. Limit keys are **path-normalized** (dynamic/unknown segments collapse to `:id`) so rotating IDs or spraying garbage paths cannot multiply an IP's budget, and the bucket map is hard-capped (self-healing under spray) |
 | CSRF | `SameSite=Lax` cookies plus an Origin check on every state-changing request: a browser-supplied Origin whose host is neither the deployment host nor in `ALLOWED_ORIGINS` is refused (non-browser callers like Daraja callbacks pass) |
-| Tracking service | `/sim/*` and `/trips/*` require the `x-internal-key` shared secret (fail-closed); GPS device ingest requires a per-device key `HMAC-SHA256(TRACKING_INTERNAL_KEY, "device:"+vehicleId)` — the public vehicleId alone is never a credential; socket `join-trip` requires a per-booking HMAC token (10-min TTL, expired members swept from rooms, 5 joins/10s per socket); socket.io sends no cross-origin CORS headers; ingest maps are hard-capped; the service binds 127.0.0.1 by default (`BIND_HOST` to override) |
+| Tracking service | `/sim/*` and `/trips/*` require the `x-internal-key` shared secret (fail-closed); `/health` reveals nothing beyond `{ok:true}`; GPS device ingest requires a per-device key `HMAC-SHA256(TRACKING_INTERNAL_KEY, "device:"+vehicleId)` — the public vehicleId alone is never a credential; socket `join-trip` requires a per-booking HMAC token (10-min TTL, expired members swept from rooms, 5 joins/10s per socket); **connection caps** (10 sockets per client IP, 500 total) stop unauthenticated connection floods; socket.io sends no cross-origin CORS headers; ingest maps are hard-capped; the service binds 127.0.0.1 by default (`BIND_HOST` to override) |
 | Input hardening | Rental length capped at 365 days; delivery coordinates range-validated; JSON bodies capped at 256 KB; duplicate plate/review races mapped to friendly 400s; promo codes carry `usedCount`/`maxUses` with an atomic burn on booking |
-| PII | Driver phone/licence numbers only appear for fleet managers; customers picking a chauffeur get a stripped list; no card data is ever stored |
-| Transport | CSP (`frame-ancestors 'none'`, `object-src 'none'`), `X-Frame-Options: DENY`, `nosniff`, strict Referrer-Policy, Permissions-Policy, COOP, HSTS on https |
+| PII | Driver phone/licence numbers only appear for fleet managers; customers picking a chauffeur get a stripped list, and customer-facing booking payloads strip the assigned chauffeur's licence number (name + phone stay — a legitimate contact need); no card data is ever stored |
+| Transport | CSP (`frame-ancestors 'none'`, `object-src 'none'`; production drops `unsafe-eval` and the `ws:`/`wss:` connect-src wildcards), `X-Frame-Options: DENY`, `nosniff`, strict Referrer-Policy, Permissions-Policy, COOP, HSTS on https, `X-Powered-By` removed; dev/prod servers bind `127.0.0.1` — always deploy behind the reverse proxy |
 | Dependencies | `next-auth` removed (unused — custom HMAC sessions); transitive deps updated; remaining advisories are dev-only chains or have no fixed release yet and are not reachable through our usage |
 | Repo hygiene | Secrets only via `.env` (gitignored); the tracking key is never shared in code; Android signing keys are never committed (see above) |
 
 Known trade-offs (documented on purpose): the dev-server CSP keeps
-`unsafe-inline`/`unsafe-eval` for HMR — tighten when serving a production
-build; in-memory rate limiting and the tracking token TTL assume a single
-instance — move to Redis/shorter TTLs when scaling horizontally.
+`unsafe-inline`/`unsafe-eval` for HMR (production drops `unsafe-eval` but keeps
+`unsafe-inline` because the App Router ships its flight payload as inline
+scripts — a nonce-based policy is the upgrade path); in-memory rate limiting
+and the tracking token TTL assume a single instance — move to Redis/shorter
+TTLs when scaling horizontally; production CSP should be smoke-tested on the
+first production deploy.
+
+Deployment notes for real (non-sandbox) environments:
+
+- Bind only via the reverse proxy — `bun run dev` / `npm start` already listen
+  on `127.0.0.1`; never expose the Next port directly.
+- If you replicate the sandbox's `XTransformPort` gateway pattern, whitelist
+  the exact ports your mini-services use instead of forwarding to arbitrary
+  localhost ports — an open forwarder turns every loopback service into
+  externally-reachable surface and leaks a port-scan oracle.
+- Seeding a production database requires `SEED_ADMIN_PASSWORD` (the seed
+  refuses to run with the public demo password).
 
 ---
 
@@ -213,7 +227,7 @@ bun install
 bun run dev                   # service on http://localhost:3003
 ```
 
-### Demo accounts (password `demo123`)
+### Demo accounts (password `demo123` — dev only)
 
 | Role | Email |
 |---|---|
@@ -221,6 +235,9 @@ bun run dev                   # service on http://localhost:3003
 | Owner | owner@safaridrive.co.ke |
 | Driver | driver@safaridrive.co.ke |
 | Admin | admin@safaridrive.co.ke |
+
+Production seeding refuses this password: set `SEED_ADMIN_PASSWORD` (min 8
+chars) and every seeded account uses it instead.
 
 The seeded demo includes an **active rental with live GPS** (watch it move on the map), a confirmed chauffeur booking ready to dispatch, a paid booking awaiting owner acceptance, and 6 months of completed bookings powering the dashboards.
 
@@ -235,6 +252,9 @@ MPESA_CONSUMER_SECRET=
 MPESA_SHORTCODE=
 MPESA_PASSKEY=
 MPESA_CALLBACK_URL=
+MPESA_CALLBACK_SECRET=           # REQUIRED in daraja mode (fail-closed)
+CARD_MOCK_ENABLED=               # only "true" enables the simulated card gateway in production
+SEED_ADMIN_PASSWORD=             # required to seed a production database
 TRACKING_SERVICE_URL=http://localhost:3003
 ```
 

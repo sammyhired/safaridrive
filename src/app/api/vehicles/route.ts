@@ -81,7 +81,9 @@ export async function GET(req: NextRequest) {
             ? [{ createdAt: 'desc' as const }]
             : [{ dailyRate: 'asc' as const }, { createdAt: 'desc' as const }]
 
-    const vehicles = await db.vehicle.findMany({ where, include: vehicleInclude, orderBy })
+    // Hard cap — the anonymous catalog can never be used to pull the whole
+    // fleet (with owner + yard joins) as one unbounded response.
+    const vehicles = await db.vehicle.findMany({ where, include: vehicleInclude, orderBy, take: 200 })
     return NextResponse.json({ vehicles: vehicles.map(serializeVehicle) })
   })
 }

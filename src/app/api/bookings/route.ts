@@ -11,7 +11,7 @@ import {
   readJson,
   vehicleLabel,
 } from '@/app/api/_lib/api'
-import { bookingInclude, serializeBooking, type BookingRow } from '@/app/api/_lib/serialize'
+import { bookingInclude, serializeBookingFor, type BookingRow } from '@/app/api/_lib/serialize'
 import { buildQuoteContext } from '@/app/api/_lib/quote-flow'
 
 export async function GET(req: NextRequest) {
@@ -33,12 +33,16 @@ export async function GET(req: NextRequest) {
       where.driver = { userId: user.id }
     } // ADMIN sees all
 
+    // Hard cap: the full table (with nested vehicle/driver/payments) is never
+    // returned in one response — an admin session token cannot be used to
+    // pull the entire bookings history as a single unbounded payload.
     const bookings = await db.booking.findMany({
       where,
       include: bookingInclude,
       orderBy: { createdAt: 'desc' },
+      take: 500,
     })
-    return NextResponse.json({ bookings: bookings.map(serializeBooking) })
+    return NextResponse.json({ bookings: bookings.map((b) => serializeBookingFor(b, user.role)) })
   })
 }
 
@@ -150,6 +154,6 @@ export async function POST(req: Request) {
       )
     }
 
-    return NextResponse.json({ booking: serializeBooking(booking) })
+    return NextResponse.json({ booking: serializeBookingFor(booking, user.role) })
   })
 }

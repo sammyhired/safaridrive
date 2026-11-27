@@ -71,7 +71,19 @@ async function main(): Promise<void> {
   await db.user.deleteMany()
 
   // ---------- users ----------
-  const passwordHash = await hashPassword('demo123')
+  // Demo credentials must never ship with a publicly-known password: this
+  // repo (and the seeded admin/owner/driver emails) are public, so seeding
+  // production with 'demo123' would hand out admin access. Production
+  // deployments must set SEED_ADMIN_PASSWORD; dev keeps the demo password.
+  const seedPassword = process.env.SEED_ADMIN_PASSWORD
+  if (process.env.NODE_ENV === 'production') {
+    if (!seedPassword || seedPassword.length < 8 || seedPassword === 'demo123') {
+      throw new Error(
+        'Refusing to seed in production: set SEED_ADMIN_PASSWORD (min 8 chars, not demo123) and re-run.',
+      )
+    }
+  }
+  const passwordHash = await hashPassword(seedPassword ?? 'demo123')
 
   const [admin, owner, coast, amina, brian, faith] = await Promise.all([
     db.user.create({

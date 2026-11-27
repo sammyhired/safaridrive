@@ -90,8 +90,8 @@ Every state change also creates Notification rows for affected parties. Guard in
 | Endpoint | Notes |
 |---|---|
 | POST `/api/payments/mpesa/stk` | CUSTOMER. `{bookingId, phone}` — phone regex `^(?:254|\+254|0)1[0-9]{8}$` (normalize to 254…). Creates Payment PENDING (method MPESA, amount = booking.total). Returns `{payment: PaymentSummary}`. In mock mode frontend then simulates the phone prompt. |
-| POST `/api/payments/mpesa/callback` | `{checkoutRequestId, result: 'success'\|'failed', phone?}` (mock) OR raw Daraja `{Body:{stkCallback:{...}}}` (real). On success: payment COMPLETED + receiptNo, booking → PAID (paymentStatus PAID), vehicle → BOOKED, notifications to customer + owner. Returns `{payment}`. 404 unknown checkoutRequestId. |
-| POST `/api/payments/card` | CUSTOMER. `{bookingId, cardNumber, cardName, expiry (MM/YY), cvv}`. Luhn check, expiry in future, cvv 3 digits. Instant COMPLETED (receipt `CARD-…`), booking → PAID, vehicle BOOKED. `{payment}` |
+| POST `/api/payments/mpesa/callback` | Fail-closed matrix. mock mode (never in production): `{checkoutRequestId, result, phone?}` accepted ONLY from the paying customer's own session. daraja mode: ONLY the official `{Body:{stkCallback:{...}}}` shape AND `MPESA_CALLBACK_SECRET` is REQUIRED (unset → 503; header `x-callback-secret`, timing-safe compare). Any other `MPESA_MODE` → 503. On success: payment COMPLETED + receiptNo, booking → PAID (paymentStatus PAID), vehicle → BOOKED, notifications to customer + owner. FAILED attempts are terminal (a late callback cannot resurrect them); a duplicate payment for an already-settled booking is voided (FAILED), never double-billed. Returns `{payment}`. 404 unknown checkoutRequestId. |
+| POST `/api/payments/card` | CUSTOMER. Simulated gateway — in production hard-disabled unless `CARD_MOCK_ENABLED=true`. `{bookingId, cardNumber, cardName, expiry (MM/YY), cvv}`. Luhn check, expiry in future, cvv 3 digits. Instant COMPLETED (receipt `CARD-…`), booking → PAID, vehicle BOOKED. `{payment}` |
 | GET `/api/payments?bookingId=` | `{payments: PaymentSummary[]}` |
 
 ## 6. Tracking (live GPS)

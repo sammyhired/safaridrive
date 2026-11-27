@@ -14,6 +14,13 @@ function cardReceipt(): string {
 
 export async function POST(req: Request) {
   return handle(async () => {
+    // The card gateway is a SIMULATION (no real PSP charge happens — the
+    // number is validated, then discarded). It must never complete real
+    // bookings in production: a deployment that wants the demo card flow
+    // must opt in explicitly with CARD_MOCK_ENABLED=true.
+    if (process.env.NODE_ENV === 'production' && process.env.CARD_MOCK_ENABLED !== 'true') {
+      throw new ApiError(403, 'Card payments are not enabled on this deployment')
+    }
     const user = await requireUser(['CUSTOMER'])
     const body = await readJson(req)
 

@@ -19,7 +19,13 @@ export async function PATCH(req: Request, ctx: Ctx) {
     const target = await db.user.findUnique({ where: { id } })
     if (!target) throw new ApiError(404, 'User not found')
 
-    const updated = await db.user.update({ where: { id }, data: { status } })
+    // Suspend/reactivate: bump the session epoch on every change so every
+    // live cookie for this user dies instantly (suspended users lose access
+    // immediately; reactivation does NOT resurrect old stolen tokens).
+    const updated = await db.user.update({
+      where: { id },
+      data: target.status === status ? {} : { status, sessionEpoch: { increment: 1 } },
+    })
     return NextResponse.json({
       user: {
         id: updated.id,

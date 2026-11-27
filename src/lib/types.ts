@@ -153,6 +153,7 @@ export interface PaymentSummary {
   method: PaymentMethod
   type: PaymentType
   amount: number
+  refundedAmount: number | null
   status: PaymentStatus
   phone: string | null
   receiptNo: string | null

@@ -1,3 +1,4 @@
+import crypto from 'node:crypto'
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { getSessionUser } from '@/lib/auth'
@@ -19,31 +20,48 @@ interface DarajaCallback {
 }
 
 /**
- * Accepts BOTH shapes:
- *  - mock:   `{checkoutRequestId, result: 'success'|'failed', phone?}` — ONLY in
- *            mock mode AND outside production AND called by the booking's own
- *            customer (the demo phone-prompt dialog). In daraja mode, in
- *            production, or from any other caller this shape is rejected so
- *            nobody can complete a payment by replaying the demo protocol.
- *  - Daraja: `{Body: {stkCallback: {ResultCode, CheckoutRequestID, CallbackMetadata}}}}`
- *            — the only accepted shape in daraja mode. When
- *            MPESA_CALLBACK_SECRET is configured, the caller must also present
- *            it in `x-callback-secret` (Safaricom can be pointed at a
- *            secret-bearing URL; this covers the official lack of callback
- *            signatures until IP allowlisting is in place).
+ * Callback shape matrix (fail-closed on every cell):
+ *  - mode "mock" (never allowed in production): ONLY the mock demo protocol
+ *    `{checkoutRequestId, result, phone?}` — and ONLY when called by the
+ *    booking's own customer session. Any daraja-shaped body is rejected.
+ *  - mode "daraja": ONLY the official Safaricom shape
+ *    `{Body: {stkCallback: {ResultCode, CheckoutRequestID, CallbackMetadata}}}`
+ *    — and MPESA_CALLBACK_SECRET is REQUIRED (no secret configured = the
+ *    endpoint refuses with 503; an unset secret must never mean "trust any
+ *    caller"). The secret must arrive in the `x-callback-secret` header
+ *    (never a query string, which leaks into access logs) and is compared
+ *    with a timing-safe compare.
+ *  - any other MPESA_MODE value: refused (a typo like "Daraja " must not
+ *    silently fall back to a weaker path).
  */
+function timingSafeEqualStr(a: string, b: string): boolean {
+  const bufA = Buffer.from(a)
+  const bufB = Buffer.from(b)
+  if (bufA.length !== bufB.length) return false
+  return crypto.timingSafeEqual(bufA, bufB)
+}
+
 export async function POST(req: Request) {
   return handle(async () => {
-    const mode = (process.env.MPESA_MODE ?? 'mock').toLowerCase()
+    const mode = (process.env.MPESA_MODE ?? 'mock').trim().toLowerCase()
+    if (mode !== 'mock' && mode !== 'daraja') {
+      throw new ApiError(503, 'Payment gateway misconfigured')
+    }
     if (mode === 'mock' && process.env.NODE_ENV === 'production') {
       // The demo payment protocol must never ship: a production deployment
       // that forgot MPESA_MODE=daraja gets it hard-disabled here.
       throw new ApiError(403, 'Forbidden')
     }
-    const callbackSecret = process.env.MPESA_CALLBACK_SECRET
-    if (mode === 'daraja' && callbackSecret) {
-      const presented = req.headers.get('x-callback-secret') ?? new URL(req.url).searchParams.get('secret')
-      if (presented !== callbackSecret) {
+    if (mode === 'daraja') {
+      // Fail-closed: an unauthenticated callback URL would let ANYONE forge
+      // "payment received" by knowing the URL. No secret configured = no
+      // callbacks accepted at all.
+      const callbackSecret = process.env.MPESA_CALLBACK_SECRET
+      if (!callbackSecret) {
+        throw new ApiError(503, 'Payment gateway misconfigured')
+      }
+      const presented = req.headers.get('x-callback-secret')
+      if (!presented || !timingSafeEqualStr(presented, callbackSecret)) {
         throw new ApiError(403, 'Forbidden')
       }
     }
@@ -61,6 +79,10 @@ export async function POST(req: Request) {
 
     const daraja = (body as { Body?: { stkCallback?: DarajaCallback } }).Body?.stkCallback
     if (daraja && typeof daraja === 'object' && (daraja.ResultCode !== undefined || daraja.CheckoutRequestID)) {
+      if (mode !== 'daraja') {
+        // daraja-shaped payloads are only ever accepted in daraja mode
+        throw new ApiError(400, 'Unsupported callback payload')
+      }
       checkoutRequestId = daraja.CheckoutRequestID ?? null
       success = Number(daraja.ResultCode) === 0
       const items = daraja.CallbackMetadata?.Item ?? []
@@ -98,8 +120,9 @@ export async function POST(req: Request) {
       }
     }
 
-    if (payment.status === 'COMPLETED' || payment.status === 'REFUNDED') {
-      // Idempotent: already processed
+    if (payment.status === 'COMPLETED' || payment.status === 'REFUNDED' || payment.status === 'FAILED') {
+      // Idempotent: already processed (FAILED attempts stay failed — a late
+      // duplicate callback cannot resurrect a superseded STK attempt)
       return NextResponse.json({ payment: serializePayment(payment) })
     }
 
