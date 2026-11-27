@@ -180,12 +180,15 @@ backend), so every layer assumes the other side may be hostile:
 |---|---|
 | Sessions | HMAC-SHA256 `httpOnly` cookie with embedded expiry, `SameSite=Lax`, `secure` behind https; scrypt password hashing (timing-safe compares); single generic login failure (no account enumeration); 7-day max session |
 | API surface | Every route authenticates and re-checks **object ownership** (booking/payment/tracking access limited to that booking's customer, its owner, its driver, or admin); server-side price recomputation on every booking/payment — client totals are never trusted |
-| Payments | M-Pesa Daraja adapter; the demo callback protocol is only accepted while `MPESA_MODE=mock` — in daraja mode only the official `stkCallback` shape is processed, optionally gated by `MPESA_CALLBACK_SECRET` until IP allowlisting is in place |
-| Rate limiting | Tiered per-IP limits in `src/middleware.ts` — 10/5min for auth, 30/5min for payments, 90/5min for quotes (429 + `Retry-After`) |
+| Payments | M-Pesa Daraja adapter; the demo callback protocol is accepted **only** in mock mode outside production and only from the paying customer's own session — a leaked `checkoutRequestId` alone can no longer complete a payment; in daraja mode only the official `stkCallback` shape is processed, optionally gated by `MPESA_CALLBACK_SECRET`; payment completion is atomic (conditional `updateMany`) so racing card/STK callers can never double-complete |
+| Booking integrity | Booking creation, availability checks, chauffeur overlap and promo burn run in a single transaction (no double-booking races); booking state transitions run transactionally — notifications and tracking calls fire only after the new status is durable; `complete` releases the vehicle only when no other blocking booking holds it |
+| Rate limiting | Tiered per-IP limits in `src/proxy.ts` (Next 16 proxy convention) — 10/5min for auth, 30/5min for payments, 90/5min for quotes (429 + `Retry-After`), plus a 256 KB request-body guard before any handler parses |
 | CSRF | `SameSite=Lax` cookies plus an Origin check on every state-changing request: a browser-supplied Origin whose host is neither the deployment host nor in `ALLOWED_ORIGINS` is refused (non-browser callers like Daraja callbacks pass) |
-| Tracking service | `/sim/*` and `/trips/*` require the `x-internal-key` shared secret (fail-closed); socket `join-trip` requires a per-booking HMAC token (10-min TTL) issued only after an ownership check — a visitor cannot subscribe to someone else's live GPS; ingest is validated (lat/lng ranges, speed caps, sane timestamps) and rate-limited per device |
+| Tracking service | `/sim/*` and `/trips/*` require the `x-internal-key` shared secret (fail-closed); GPS device ingest requires a per-device key `HMAC-SHA256(TRACKING_INTERNAL_KEY, "device:"+vehicleId)` — the public vehicleId alone is never a credential; socket `join-trip` requires a per-booking HMAC token (10-min TTL, expired members swept from rooms, 5 joins/10s per socket); socket.io sends no cross-origin CORS headers; ingest maps are hard-capped; the service binds 127.0.0.1 by default (`BIND_HOST` to override) |
+| Input hardening | Rental length capped at 365 days; delivery coordinates range-validated; JSON bodies capped at 256 KB; duplicate plate/review races mapped to friendly 400s; promo codes carry `usedCount`/`maxUses` with an atomic burn on booking |
 | PII | Driver phone/licence numbers only appear for fleet managers; customers picking a chauffeur get a stripped list; no card data is ever stored |
 | Transport | CSP (`frame-ancestors 'none'`, `object-src 'none'`), `X-Frame-Options: DENY`, `nosniff`, strict Referrer-Policy, Permissions-Policy, COOP, HSTS on https |
+| Dependencies | `next-auth` removed (unused — custom HMAC sessions); transitive deps updated; remaining advisories are dev-only chains or have no fixed release yet and are not reachable through our usage |
 | Repo hygiene | Secrets only via `.env` (gitignored); the tracking key is never shared in code; Android signing keys are never committed (see above) |
 
 Known trade-offs (documented on purpose): the dev-server CSP keeps
@@ -239,11 +242,19 @@ With `MPESA_MODE=mock`, the STK push flow is simulated end-to-end (a phone-promp
 
 ### Connecting real GPS trackers
 
-Any tracker that speaks the OSMAND protocol (Traccar ecosystem, GPSLogger app, most cheap GPRS trackers) can report positions:
+Any tracker that speaks the OSMAND protocol (Traccar ecosystem, GPSLogger app, most cheap GPRS trackers) can report positions. Each device must present its **per-device key** (the vehicleId alone is public and is never accepted as the only credential):
 
 ```
-GET http://<tracking-service>:3003/?id=<vehicleId>&lat=-1.29&lon=36.78&timestamp=1700000000&speed=42&heading=90
-POST /api/positions  { "id": "...", "lat": ..., "lon": ..., "speed": ..., "heading": ... }
+key = HMAC-SHA256(TRACKING_INTERNAL_KEY, "device:<vehicleId>")   (hex)
+
+GET http://<tracking-service>:3003/?id=<vehicleId>&key=<deviceKey>&lat=-1.29&lon=36.78&timestamp=1700000000&speed=42&heading=90
+POST /api/positions     { "id": "<vehicleId>", "key": "<deviceKey>", "lat": ..., "lon": ..., "speed": ..., "heading": ... }
+```
+
+Derive a device key on the service host (same `TRACKING_INTERNAL_KEY` as the app):
+
+```bash
+bun -e "console.log(require('node:crypto').createHmac('sha256', process.env.TRACKING_INTERNAL_KEY).update('device:<vehicleId>').digest('hex'))"
 ```
 
 Reported positions replace the simulation for that trip and stream to the customer's map in real time.

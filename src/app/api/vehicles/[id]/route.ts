@@ -63,7 +63,16 @@ export async function PATCH(req: Request, ctx: Ctx) {
       if (!CATEGORY_ORDER.includes(body.category as never)) throw new ApiError(400, 'Unknown category')
       data.category = String(body.category)
     }
-    if (body.plate !== undefined) data.plate = requireString(body.plate, 'Plate', { min: 4, max: 12 }).toUpperCase()
+    if (body.plate !== undefined) {
+      const plate = requireString(body.plate, 'Plate', { min: 4, max: 12 }).toUpperCase()
+      // Pre-check so a duplicate plate returns a 400 instead of a raw 500
+      const clash = await db.vehicle.findFirst({
+        where: { plate, id: { not: id } },
+        select: { id: true },
+      })
+      if (clash) throw new ApiError(400, `A vehicle with plate ${plate} already exists`)
+      data.plate = plate
+    }
     if (body.seats !== undefined) data.seats = requireInt(body.seats, 'Seats', { min: 2, max: 60 })
     if (body.doors !== undefined) data.doors = requireInt(body.doors, 'Doors', { min: 2, max: 8 })
     if (body.transmission !== undefined) {

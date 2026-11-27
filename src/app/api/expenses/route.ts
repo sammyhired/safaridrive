@@ -20,12 +20,16 @@ export async function GET(req: NextRequest) {
       where.vehicleId = vehicleId
     }
 
-    const expenses = await db.expense.findMany({
-      where,
-      include: { vehicle: true },
-      orderBy: { date: 'desc' },
-    })
-    const total = expenses.reduce((sum, e) => sum + e.amount, 0)
+    const [expenses, sum] = await Promise.all([
+      db.expense.findMany({
+        where,
+        include: { vehicle: true },
+        orderBy: { date: 'desc' },
+        take: 500,
+      }),
+      db.expense.aggregate({ where, _sum: { amount: true } }),
+    ])
+    const total = sum._sum.amount ?? 0
     return NextResponse.json({ expenses: expenses.map(serializeExpense), total })
   })
 }

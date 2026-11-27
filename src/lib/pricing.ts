@@ -19,11 +19,14 @@ export interface QuoteDriver {
 }
 
 export interface QuotePromo {
+  id?: string
   code: string
   percentOff: number | null
   amountOff: number | null
   active: boolean
   expiresAt: Date | null
+  usedCount?: number | null
+  maxUses?: number | null
 }
 
 export interface QuoteInputLike {
@@ -71,6 +74,9 @@ export function evaluatePromo(
   }
   if (promo.expiresAt && promo.expiresAt.getTime() < Date.now()) {
     return { valid: false, discount: 0, message: `Code ${upper} has expired` }
+  }
+  if (promo.maxUses != null && (promo.usedCount ?? 0) >= promo.maxUses) {
+    return { valid: false, discount: 0, message: `Code ${upper} has reached its usage limit` }
   }
   let discount = 0
   if (promo.percentOff && promo.percentOff > 0) {

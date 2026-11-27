@@ -11,7 +11,7 @@ export async function GET(req: NextRequest) {
       where: vehicleId ? { booking: { vehicleId } } : undefined,
       include: { author: true },
       orderBy: { createdAt: 'desc' },
-      ...(vehicleId ? {} : { take: 50 }),
+      take: 50,
     })
     return NextResponse.json({ reviews: reviews.map(serializeReview) })
   })
@@ -35,10 +35,19 @@ export async function POST(req: Request) {
     const existing = await db.review.findUnique({ where: { bookingId } })
     if (existing) throw new ApiError(400, 'You have already reviewed this booking')
 
-    const review = await db.review.create({
-      data: { bookingId, authorId: user.id, rating, comment },
-      include: { author: true },
-    })
+    let review
+    try {
+      review = await db.review.create({
+        data: { bookingId, authorId: user.id, rating, comment },
+        include: { author: true },
+      })
+    } catch (err) {
+      // Racing duplicate create (unique bookingId) — same friendly 400
+      if ((err as { code?: string })?.code === 'P2002') {
+        throw new ApiError(400, 'You have already reviewed this booking')
+      }
+      throw err
+    }
 
     // Recompute vehicle rating as the mean of all its reviews
     const agg = await db.review.aggregate({

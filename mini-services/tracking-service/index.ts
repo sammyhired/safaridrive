@@ -33,6 +33,8 @@ import { Server as SocketIOServer, type Socket } from 'socket.io'
 const PORT = 3003
 const TICK_MS = 2000 // simulation ticker cadence
 const TRIP_STATE_EVERY_TICKS = 15 // emit full trip-state every ~30s
+const TOKEN_SWEEP_EVERY_TICKS = 30 // sweep expired join tokens every ~60s
+let tickCount = 0
 const MAX_PATH_POINTS = 500 // path is capped to the most recent 500 points
 
 // --------------------------------- types -----------------------------------
@@ -553,6 +555,25 @@ function requireInternalKey(req: IncomingMessage): boolean {
   return crypto.timingSafeEqual(Buffer.from(value), Buffer.from(INTERNAL_KEY))
 }
 
+/**
+ * Per-device ingest credential: trackers must present
+ * `key = HMAC-SHA256(TRACKING_INTERNAL_KEY, "device:" + vehicleId)` (hex).
+ * The vehicleId alone is public (it appears in public listings), so it can
+ * never be the only credential — otherwise anyone could feed fake GPS into
+ * any live trip. Fail-closed: without INTERNAL_KEY no key is accepted.
+ */
+function deviceKeyFor(vehicleId: string): string | null {
+  if (!INTERNAL_KEY) return null
+  return crypto.createHmac('sha256', INTERNAL_KEY).update(`device:${vehicleId}`).digest('hex')
+}
+
+function deviceKeyValid(vehicleId: string, presented: unknown): boolean {
+  const expected = deviceKeyFor(vehicleId)
+  if (!expected) return false // fail closed
+  if (typeof presented !== 'string' || presented.length !== expected.length) return false
+  return crypto.timingSafeEqual(Buffer.from(presented), Buffer.from(expected))
+}
+
 interface JoinTokenClaims {
   b: string // bookingId this token unlocks
   exp: number // epoch seconds
@@ -584,16 +605,29 @@ function verifyJoinToken(raw: unknown, bookingId: string): boolean {
 
 // --------------------------- ingest protections ----------------------------
 
-/** Per-vehicle ingest rate limit: 30 positions / minute / vehicle id. */
+/**
+ * Per-vehicle ingest rate limit: 30 positions / minute / vehicle id.
+ * Hard-capped map size so distinct-id floods cannot grow it unbounded.
+ */
 const ingestBuckets = new Map<string, { count: number; resetAt: number }>()
+const INGEST_BUCKETS_MAX = 2048
 
 function ingestAllowed(id: string): boolean {
   const now = Date.now()
   const b = ingestBuckets.get(id)
   if (!b || b.resetAt <= now) {
     ingestBuckets.set(id, { count: 1, resetAt: now + 60_000 })
-    if (ingestBuckets.size > 5000) {
-      for (const [k, v] of ingestBuckets) if (v.resetAt <= now) ingestBuckets.delete(k)
+    // Prune expired, then evict oldest if still oversized (Map keeps insertion order)
+    if (ingestBuckets.size > INGEST_BUCKETS_MAX) {
+      for (const [k, v] of ingestBuckets) {
+        if (ingestBuckets.size <= INGEST_BUCKETS_MAX) break
+        if (v.resetAt <= now || k === id) ingestBuckets.delete(k)
+      }
+    }
+    while (ingestBuckets.size > INGEST_BUCKETS_MAX) {
+      const oldest = ingestBuckets.keys().next().value
+      if (oldest === undefined) break
+      ingestBuckets.delete(oldest)
     }
     return true
   }
@@ -854,8 +888,14 @@ async function handleRest(req: IncomingMessage, res: ServerResponse): Promise<vo
     // --- OSMAND / Traccar JSON ingest variant ---
     if (path === '/api/positions' && method === 'POST') {
       const body = await readJsonOrForm(req)
+      const deviceId = String(
+        body.id ?? body.deviceId ?? body.uniqueId ?? '',
+      ).slice(0, 200)
+      if (!deviceKeyValid(deviceId, body.key ?? req.headers['x-device-key'])) {
+        return sendJson(res, 403, { error: 'forbidden' })
+      }
       const result = ingestPosition({
-        id: body.id ?? body.deviceId ?? body.uniqueId,
+        id: deviceId,
         lat: body.lat ?? body.latitude,
         lng: body.lng ?? body.lon ?? body.longitude,
         timestamp: body.timestamp ?? body.time ?? body.fixTime,
@@ -868,8 +908,12 @@ async function handleRest(req: IncomingMessage, res: ServerResponse): Promise<vo
     // --- OSMAND protocol ingest (GPSLogger / Traccar-compatible) ---
     if (path === '/' && method === 'GET') {
       const q = u.searchParams
+      const deviceId = (q.get('id') ?? '').slice(0, 200)
+      if (!deviceKeyValid(deviceId, q.get('key') ?? req.headers['x-device-key'])) {
+        return sendJson(res, 403, { error: 'forbidden' })
+      }
       const result = ingestPosition({
-        id: q.get('id'),
+        id: deviceId,
         lat: q.get('lat'),
         lng: q.get('lng') ?? q.get('lon'),
         timestamp: q.get('timestamp') ?? q.get('time'),
@@ -928,10 +972,18 @@ const io = new SocketIOServer(httpServer, {
   // websocket connections from the browser to this service.
   path: '/',
   serveClient: false,
-  cors: {
-    origin: '*',
-    methods: ['GET', 'POST'],
-  },
+  // Browsers reach this service same-origin through the gateway, so no
+  // cross-origin access is granted at all: with TRACKING_ALLOWED_ORIGINS
+  // unset, socket.io sends no CORS headers and third-party sites are refused
+  // by the browser. Set TRACKING_ALLOWED_ORIGINS only for split deployments.
+  cors: process.env.TRACKING_ALLOWED_ORIGINS
+    ? {
+        origin: process.env.TRACKING_ALLOWED_ORIGINS.split(',')
+          .map((s) => s.trim())
+          .filter(Boolean),
+        methods: ['GET', 'POST'],
+      }
+    : undefined,
   pingTimeout: 60000,
   pingInterval: 25000,
   maxHttpBufferSize: 1e6,
@@ -975,10 +1027,20 @@ function extractBookingId(data: unknown): string | null {
 
 io.on('connection', (socket: Socket) => {
   log(`socket connected ${socket.id}`)
+  // Per-socket join attempts: a client may not brute-force join tokens
+  let joinAttempts: number[] = []
   socket.on('join-trip', (data: unknown) => {
     try {
       const bookingId = extractBookingId(data)
       if (!bookingId) return
+      // Brute-force guard: 5 join attempts per 10s per socket
+      const now = Date.now()
+      joinAttempts = joinAttempts.filter((t) => now - t < 10_000)
+      if (joinAttempts.length >= 5) {
+        socket.emit('join-error', { bookingId, reason: 'rate_limited' })
+        return
+      }
+      joinAttempts.push(now)
       // Live GPS is sensitive: only holders of a per-booking token issued by
       // the platform (after an ownership check) may subscribe.
       const token =
@@ -991,6 +1053,16 @@ io.on('connection', (socket: Socket) => {
         return
       }
       void socket.join(roomFor(bookingId))
+      // Remember the token expiry so the sweep below can drop stale members
+      try {
+        const claims = JSON.parse(
+          Buffer.from(String(token).slice(0, String(token).indexOf('.')), 'base64url').toString('utf8'),
+        ) as { exp?: unknown }
+        socket.data.joinExpiry = typeof claims.exp === 'number' ? claims.exp * 1000 : 0
+        socket.data.joinedRooms = [...(socket.data.joinedRooms ?? []), roomFor(bookingId)]
+      } catch {
+        /* token already verified; expiry tracking is best-effort */
+      }
       // Immediately send the full trip state (inactive shape when unknown).
       socket.emit('trip-state', getState(bookingId))
       log(`socket ${socket.id} joined ${roomFor(bookingId)}`)
@@ -1018,6 +1090,22 @@ io.on('connection', (socket: Socket) => {
 // ------------------------------ sim ticker ---------------------------------
 
 function tick(): void {
+  // Every ~60s: drop sockets whose join tokens have expired — a token is
+  // checked at join time, and now also continuously while subscribed.
+  tickCount++
+  if (tickCount % TOKEN_SWEEP_EVERY_TICKS === 0) {
+    const now = Date.now()
+    for (const socket of io.sockets.sockets.values()) {
+      const exp = socket.data?.joinExpiry as number | undefined
+      if (exp && exp <= now) {
+        const rooms = (socket.data?.joinedRooms ?? []) as string[]
+        for (const room of rooms) socket.leave(room)
+        socket.data.joinedRooms = []
+        socket.data.joinExpiry = 0
+        log(`socket ${socket.id}: join token expired, left tracked rooms`)
+      }
+    }
+  }
   for (const trip of Array.from(trips.values())) {
     try {
       if (!trip.active || trip.source !== 'sim' || !trip.sim) continue
@@ -1040,7 +1128,6 @@ function tick(): void {
 }
 
 G.__SD_TRACKING_TICKER = setInterval(tick, TICK_MS)
-
 // ------------------------------- startup -----------------------------------
 
 function tryListen(attemptsLeft: number): void {
@@ -1054,12 +1141,13 @@ function tryListen(attemptsLeft: number): void {
     }
   }
   httpServer.once('error', onError)
-  httpServer.listen(PORT, () => {
+  const bindHost = process.env.BIND_HOST ?? '127.0.0.1' // only the gateway + localhost callers may reach us
+  httpServer.listen(PORT, bindHost, () => {
     httpServer.removeListener('error', onError)
     httpServer.on('error', (e) => warn('server error:', e.message))
     G.__SD_TRACKING_HTTP = httpServer
     log('SafariDrive tracking service')
-    log(`  listening on port ${PORT}`)
+    log(`  listening on ${bindHost}:${PORT}`)
     log(`  REST   : POST /sim/start | POST /sim/stop | GET /trips/:bookingId | GET /health`)
     log(`  OSMAND : GET /?id=<vehicleId>&lat=&lon=&timestamp=&speed=&heading= | POST /api/positions`)
     log(`  socket : path '/', rooms booking:{id} (join-trip / leave-trip -> trip-state / position)`)

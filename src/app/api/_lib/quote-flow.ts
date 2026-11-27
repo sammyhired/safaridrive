@@ -11,6 +11,7 @@ import type { ExtraSelection, Quote } from '@/lib/types'
 
 const BOOKING_MODES = ['PICKUP', 'DELIVERY', 'CHAUFFEUR'] as const
 const START_GRACE_MIN = 5
+const MAX_RENTAL_DAYS = 365
 
 export interface ParsedQuoteInput {
   vehicleId: string
@@ -44,6 +45,9 @@ export function parseQuoteInput(body: Record<string, unknown>): ParsedQuoteInput
   if (endDate.getTime() <= startDate.getTime()) throw new ApiError(400, 'End date must be after the start date')
   const grace = Date.now() - START_GRACE_MIN * 60 * 1000
   if (startDate.getTime() < grace) throw new ApiError(400, 'Start date cannot be in the past')
+  if (endDate.getTime() - startDate.getTime() > MAX_RENTAL_DAYS * 86_400_000) {
+    throw new ApiError(400, `Rentals are capped at ${MAX_RENTAL_DAYS} days`)
+  }
 
   const mode = body.mode
   if (typeof mode !== 'string' || !BOOKING_MODES.includes(mode as never)) {
@@ -51,9 +55,15 @@ export function parseQuoteInput(body: Record<string, unknown>): ParsedQuoteInput
   }
 
   const deliveryAddress =
-    typeof body.deliveryAddress === 'string' && body.deliveryAddress.trim() ? body.deliveryAddress.trim() : null
+    typeof body.deliveryAddress === 'string' && body.deliveryAddress.trim() ? body.deliveryAddress.trim().slice(0, 300) : null
   const deliveryLat = typeof body.deliveryLat === 'number' && Number.isFinite(body.deliveryLat) ? body.deliveryLat : null
   const deliveryLng = typeof body.deliveryLng === 'number' && Number.isFinite(body.deliveryLng) ? body.deliveryLng : null
+  if (deliveryLat !== null && (deliveryLat < -90 || deliveryLat > 90)) {
+    throw new ApiError(400, 'deliveryLat must be between -90 and 90')
+  }
+  if (deliveryLng !== null && (deliveryLng < -180 || deliveryLng > 180)) {
+    throw new ApiError(400, 'deliveryLng must be between -180 and 180')
+  }
   if (mode !== 'PICKUP' && !deliveryAddress && deliveryLat === null) {
     throw new ApiError(400, 'A delivery address or location is required for delivery and chauffeur bookings')
   }

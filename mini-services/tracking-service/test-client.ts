@@ -8,10 +8,20 @@
 // ============================================================================
 
 import { io } from 'socket.io-client'
+import crypto from 'node:crypto'
 
 const BASE = 'http://localhost:3003'
 const BOOKING = 'test-socket-' + Date.now()
 const VEHICLE = 'test-socket-veh'
+
+// Shared internal key (same as the main app's TRACKING_INTERNAL_KEY)
+const INTERNAL_KEY = process.env.TRACKING_INTERNAL_KEY ?? ''
+const DEVICE_KEY = (id: string) =>
+  INTERNAL_KEY ? crypto.createHmac('sha256', INTERNAL_KEY).update(`device:${id}`).digest('hex') : ''
+
+function authHeaders(): Record<string, string> {
+  return INTERNAL_KEY ? { 'x-internal-key': INTERNAL_KEY } : {}
+}
 
 function fail(msg: string): never {
   console.error('FAIL:', msg)
@@ -51,7 +61,7 @@ async function main() {
   // 2. start a DELIVERY sim (socket path must be '/', websocket preferred)
   const start = (await fetch(`${BASE}/sim/start`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify({
       bookingId: BOOKING,
       vehicleId: VEHICLE,

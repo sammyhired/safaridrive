@@ -12,51 +12,79 @@ type PaymentRow = Prisma.PaymentGetPayload<{ include: { booking: { include: { ve
  * Mark a payment COMPLETED with a receipt and (when the booking is still
  * awaiting payment) transition booking → PAID, vehicle → BOOKED and notify
  * the customer + vehicle owner.
+ *
+ * Atomic: the PENDING → COMPLETED flip is a conditional updateMany, so two
+ * racing callers (e.g. card POST + STK callback) can never both transition
+ * the booking — the loser returns the already-completed payment unchanged.
  */
 export async function completePayment(
   paymentId: string,
   receiptNo: string,
 ): Promise<PaymentRow> {
-  const payment = await db.payment.findUnique({
-    where: { id: paymentId },
-    include: { booking: { include: { vehicle: true, customer: true } } },
-  })
-  if (!payment) throw new Error('Payment not found')
+  const notifyQueue: Array<{ userId: string; title: string; body: string }> = []
 
-  const updated = await db.payment.update({
-    where: { id: paymentId },
-    data: { status: 'COMPLETED', receiptNo },
-    include: { booking: { include: { vehicle: true, customer: true } } },
-  })
+  const payment = await db.$transaction(async (tx) => {
+    const existing = await tx.payment.findUnique({
+      where: { id: paymentId },
+      include: { booking: { include: { vehicle: true, customer: true } } },
+    })
+    if (!existing) throw new Error('Payment not found')
 
-  const booking = updated.booking
-  if (booking.status === 'PENDING_PAYMENT') {
-    await db.booking.update({
-      where: { id: booking.id },
+    // Idempotent: another caller already finished this payment
+    if (existing.status === 'COMPLETED' || existing.status === 'REFUNDED') {
+      return existing
+    }
+
+    // The single atomic claim: only a PENDING payment flips to COMPLETED
+    const claimed = await tx.payment.updateMany({
+      where: { id: paymentId, status: 'PENDING' },
+      data: { status: 'COMPLETED', receiptNo },
+    })
+    if (claimed.count === 0) {
+      const raced = await tx.payment.findUnique({
+        where: { id: paymentId },
+        include: { booking: { include: { vehicle: true, customer: true } } },
+      })
+      return raced ?? existing
+    }
+
+    const booking = existing.booking
+    // Only the first completion flips the booking (conditional update guard)
+    const bookingClaimed = await tx.booking.updateMany({
+      where: { id: booking.id, status: 'PENDING_PAYMENT' },
       data: { status: 'PAID', paymentStatus: 'PAID' },
     })
-    await db.vehicle.update({
-      where: { id: booking.vehicleId },
-      data: { status: 'BOOKED' },
+    if (bookingClaimed.count > 0) {
+      await tx.vehicle.update({
+        where: { id: booking.vehicleId },
+        data: { status: 'BOOKED' },
+      })
+      notifyQueue.push({
+        userId: booking.customerId,
+        title: 'Payment received',
+        body: `KSh ${booking.total.toLocaleString('en-KE')} received for booking ${booking.reference} (${vehicleLabel(booking.vehicle)}).`,
+      })
+      notifyQueue.push({
+        userId: booking.vehicle.ownerId,
+        title: 'New paid booking',
+        body: `Booking ${booking.reference} for ${vehicleLabel(booking.vehicle)} has been paid by ${booking.customer.name} — awaiting your acceptance.`,
+      })
+    }
+
+    return tx.payment.findUnique({
+      where: { id: paymentId },
+      include: { booking: { include: { vehicle: true, customer: true } } },
     })
-    await notify(
-      booking.customerId,
-      'Payment received',
-      `KSh ${booking.total.toLocaleString('en-KE')} received for booking ${booking.reference} (${vehicleLabel(booking.vehicle)}).`,
-      'PAYMENT',
-    )
-    await notify(
-      booking.vehicle.ownerId,
-      'New paid booking',
-      `Booking ${booking.reference} for ${vehicleLabel(booking.vehicle)} has been paid by ${booking.customer.name} — awaiting your acceptance.`,
-      'PAYMENT',
-    )
+  })
+
+  if (!payment) throw new Error('Payment not found')
+
+  // Notifications only after the transition is durable
+  for (const n of notifyQueue) {
+    await notify(n.userId, n.title, n.body, 'PAYMENT')
   }
 
-  return db.payment.findUnique({
-    where: { id: paymentId },
-    include: { booking: { include: { vehicle: true, customer: true } } },
-  }) as Promise<PaymentRow>
+  return payment as PaymentRow
 }
 
 // ---------- M-Pesa phone handling ----------

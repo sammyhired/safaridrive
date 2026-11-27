@@ -29,10 +29,16 @@ export async function handle(fn: () => Promise<Response>): Promise<Response> {
   }
 }
 
-/** Parse a JSON request body, 400 on invalid JSON. */
+/** Parse a JSON request body, 400 on invalid JSON, 413 when oversized. */
 export async function readJson(req: Request): Promise<Record<string, unknown>> {
   try {
-    const body = await req.json()
+    // Cap before parsing: readJson feeds every route, so no unbounded JSON
+    // may reach Prisma or the pricing engine (proxy.ts also guards earlier).
+    const raw = await req.text()
+    if (raw.length > 262_144) {
+      throw new ApiError(413, 'Request body too large')
+    }
+    const body = raw ? JSON.parse(raw) : {}
     if (!body || typeof body !== 'object' || Array.isArray(body)) {
       throw new ApiError(400, 'Request body must be a JSON object')
     }

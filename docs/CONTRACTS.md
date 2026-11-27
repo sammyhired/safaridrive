@@ -102,7 +102,7 @@ Next.js talks to the tracking mini-service at `TRACKING_SERVICE_URL` (default `h
 |---|---|
 | GET `/api/tracking/[bookingId]` | Customer-of-booking / owner / driver / admin. Proxies `GET {TRACKING_SERVICE_URL}/trips/{bookingId}`. Returns `TrackingResponse` (see types). If service down → `{booking, trip: null}`. |
 
-Frontend live updates: socket.io client `io('/?XTransformPort=3003')` (path MUST be `/`), join room: emit `join-trip` with `{bookingId}`; server emits `trip-state` (full TripState) then `position` `{lat,lng,speed,heading,ts}` every ~2s. Leave: `leave-trip`.
+Frontend live updates: socket.io client `io('/?XTransformPort=3003')` (path MUST be `/`), join room: emit `join-trip` with `{bookingId, token}` (token from `GET /api/tracking/[bookingId]`, per-booking HMAC, 10-min TTL); server emits `trip-state` (full TripState) then `position` `{lat,lng,speed,heading,ts}` every ~2s. Leave: `leave-trip`. Without a valid token the join is rejected (`join-error`).
 
 ## 7. Reviews / Expenses / Notifications / Stats / Users / Promos
 
@@ -157,9 +157,9 @@ REST (called server-to-server by Next.js, or by GPS devices through the gateway 
 - `POST /sim/start` `{bookingId, vehicleId, from:{lat,lng}, to:{lat,lng}, mode: 'DELIVERY'|'RENTAL', label}` — starts simulation. DELIVERY: vehicle moves from→to along a straight line at realistic speed, completing in ~3-4 min wall time, then holds at destination. RENTAL: loops on a small circuit around `to` (or `from` if no `to`).
 - `POST /sim/stop` `{bookingId}`
 - `GET /trips/:bookingId` → `{active, mode, label, latest, path, from, to, progress, etaMin}` (path capped at last 500 points)
-- `GET /?id=<vehicleId>&lat=..&lon=..&timestamp=..&speed=..&heading=..` — **OSMAND protocol compatible** (works with Traccar-compatible apps like GPSLogger): updates the active trip for that vehicle (external hardware ingest). Also `POST /api/positions` accepting same fields as JSON.
+- `GET /?id=<vehicleId>&key=<deviceKey>&lat=..&lon=..&timestamp=..&speed=..&heading=..` — **OSMAND protocol compatible** (works with Traccar-compatible apps like GPSLogger): updates the active trip for that vehicle (external hardware ingest). `key = HMAC-SHA256(TRACKING_INTERNAL_KEY, "device:"+vehicleId)` (hex) — the vehicleId alone is public, so it is never accepted as the only credential. Also `POST /api/positions` accepting the same fields as JSON (key in body `key` or `x-device-key` header).
 
-Socket events: client emits `join-trip {bookingId}` → server joins room `booking:{id}`, emits `trip-state` (full state) then broadcasts `position` `{lat,lng,speed,heading,ts}` to that room every 2s. `leave-trip {bookingId}` to leave. `disconnect` cleans rooms.
+Socket events: client emits `join-trip {bookingId, token}` (per-booking HMAC token issued by the app after an ownership check; tokens expire after 10 min and expired members are swept from rooms) → server joins room `booking:{id}`, emits `trip-state` (full state) then broadcasts `position` `{lat,lng,speed,heading,ts}` to that room every 2s. `leave-trip {bookingId}` to leave. `disconnect` cleans rooms. Join attempts are rate-limited per socket (5 / 10s).
 
 ## 10. Seed data (Task 2-a, `prisma/seed.ts`, run with `bun prisma/seed.ts`)
 

@@ -217,6 +217,8 @@ export function serializePromo(p: PromoRow): PromoCode {
     amountOff: p.amountOff,
     active: p.active,
     expiresAt: p.expiresAt ? p.expiresAt.toISOString() : null,
+    usedCount: p.usedCount,
+    maxUses: p.maxUses,
   }
 }
 

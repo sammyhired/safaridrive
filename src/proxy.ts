@@ -1,5 +1,5 @@
 // ============================================================
-// SafariDrive API security middleware
+// SafariDrive API security proxy (Next 16 proxy convention)
 //
 // Runs before every /api/* route handler:
 //   1. Cross-origin guard — browsers always attach an Origin header to
@@ -8,14 +8,18 @@
 //      ALLOWED_ORIGINS list, the request is refused. Requests without Origin
 //      (curl, Safaricom Daraja callbacks, native GPS trackers) pass — they
 //      are not browsers and cannot mount CSRF.
-//   2. Tiered rate limiting per client IP (in-memory; single-instance).
-//   3. HSTS on https requests.
+//   2. Request-size guard — oversized bodies are refused before any route
+//      handler or JSON parser runs (defense in depth; readJson also caps).
+//   3. Tiered rate limiting per client IP (in-memory; single-instance).
+//   4. HSTS on https requests.
 //
 // Edge runtime: no Node APIs here — plain JS only.
 // ============================================================
 import { NextResponse, type NextRequest } from 'next/server'
 
 type Bucket = { count: number; resetAt: number }
+
+const MAX_BODY_BYTES = 256 * 1024
 
 // module-scope: one map per server instance, pruned on demand
 const buckets = new Map<string, Bucket>()
@@ -73,7 +77,7 @@ function tier(path: string, method: string): { limit: number; windowMs: number }
   return { limit: 120, windowMs: 5 * 60_000 }
 }
 
-export function middleware(req: NextRequest) {
+export function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl
   const method = req.method.toUpperCase()
 
@@ -98,9 +102,18 @@ export function middleware(req: NextRequest) {
         )
       }
     }
+
+    // ---- 2. Refuse oversized bodies before any handler runs ----
+    const contentLength = Number(req.headers.get('content-length') ?? '0')
+    if (Number.isFinite(contentLength) && contentLength > MAX_BODY_BYTES) {
+      return NextResponse.json(
+        { error: 'Request body too large' },
+        { status: 413 },
+      )
+    }
   }
 
-  // ---- 2. Rate limiting ----
+  // ---- 3. Rate limiting ----
   const now = Date.now()
   prune(now)
   const { limit, windowMs } = tier(pathname, method)
@@ -127,7 +140,7 @@ export function middleware(req: NextRequest) {
     return res
   }
 
-  // ---- 3. HSTS when already on https ----
+  // ---- 4. HSTS when already on https ----
   const res = NextResponse.next()
   if ((req.headers.get('x-forwarded-proto') ?? '').split(',')[0].trim() === 'https') {
     res.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')

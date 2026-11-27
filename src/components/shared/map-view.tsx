@@ -155,7 +155,11 @@ export default function MapView({
   const initialViewRef = useRef<{ center?: [number, number]; zoom?: number }>({ center, zoom })
   const [ready, setReady] = useState(false)
 
-  onMarkerClickRef.current = onMarkerClick
+  // Keep the latest callback without re-initializing the map (ref updates
+  // belong in an effect, never during render)
+  useEffect(() => {
+    onMarkerClickRef.current = onMarkerClick
+  }, [onMarkerClick])
 
   // ---- Init map once (client only); destroy on unmount ----
   useEffect(() => {

@@ -214,6 +214,8 @@ export interface PromoCode {
   amountOff: number | null
   active: boolean
   expiresAt: string | null
+  usedCount: number
+  maxUses: number | null
 }
 
 export interface Expense {

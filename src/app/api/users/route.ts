@@ -17,6 +17,7 @@ export async function GET() {
         createdAt: true,
       },
       orderBy: { createdAt: 'asc' },
+      take: 500,
     })
     return NextResponse.json({
       users: users.map((u) => ({ ...u, createdAt: u.createdAt.toISOString() })),

@@ -95,6 +95,10 @@ function Carousel({
 
   React.useEffect(() => {
     if (!api) return
+    // Generated shadcn/ui pattern: initialize the parent's scroll-snap state
+    // from the embla instance on mount (onSelect wraps a setState in the
+    // parent — the rule cannot see the subscription-shaped intent).
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- generated code
     onSelect(api)
     api.on("reInit", onSelect)
     api.on("select", onSelect)

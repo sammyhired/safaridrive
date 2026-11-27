@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import {
   Building2,
   Car,
@@ -46,6 +46,22 @@ export default function LoginDialog({
   open: boolean
   onOpenChange: (o: boolean) => void
 }) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Welcome to SafariDrive</DialogTitle>
+          <DialogDescription>Book. Pay. Drive. — car rental across Kenya.</DialogDescription>
+        </DialogHeader>
+        {/* DialogContent unmounts while closed, so the form state below is
+            fresh every time the dialog opens — no reset effects needed. */}
+        <LoginForm close={() => onOpenChange(false)} />
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function LoginForm({ close }: { close: () => void }) {
   const { toast } = useToast()
   const { login, loginDemo, register } = useSession()
 
@@ -56,18 +72,6 @@ export default function LoginDialog({
   const [name, setName] = useState('')
   const [phone, setPhone] = useState('')
   const [role, setRole] = useState<Role>('CUSTOMER')
-
-  useEffect(() => {
-    if (open) {
-      setTab('signin')
-      setBusy(null)
-      setEmail('')
-      setPassword('')
-      setName('')
-      setPhone('')
-      setRole('CUSTOMER')
-    }
-  }, [open])
 
   const fail = (err: unknown): void => {
     if (err instanceof ApiError && err.status === 401) {
@@ -81,7 +85,7 @@ export default function LoginDialog({
 
   const succeed = (user: SessionUser, message: string): void => {
     toast({ title: message, description: user.email })
-    onOpenChange(false)
+    close()
   }
 
   const handleSignIn = async (e: React.FormEvent) => {
@@ -144,14 +148,7 @@ export default function LoginDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>Welcome to SafariDrive</DialogTitle>
-          <DialogDescription>Book. Pay. Drive. — car rental across Kenya.</DialogDescription>
-        </DialogHeader>
-
-        <Tabs value={tab} onValueChange={(v) => setTab(v as 'signin' | 'register')}>
+    <Tabs value={tab} onValueChange={(v) => setTab(v as 'signin' | 'register')}>
           <TabsList className="grid w-full grid-cols-2">
             <TabsTrigger value="signin">Sign in</TabsTrigger>
             <TabsTrigger value="register">Create account</TabsTrigger>
@@ -328,7 +325,5 @@ export default function LoginDialog({
             </form>
           </TabsContent>
         </Tabs>
-      </DialogContent>
-    </Dialog>
   )
 }

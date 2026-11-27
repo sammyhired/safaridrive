@@ -165,6 +165,8 @@ model PromoCode {
   amountOff   Int?
   active      Boolean   @default(true)
   expiresAt   DateTime?
+  usedCount   Int       @default(0)
+  maxUses     Int?
   createdAt   DateTime  @default(now())
 }
 

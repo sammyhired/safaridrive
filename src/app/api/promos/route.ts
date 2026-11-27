@@ -27,12 +27,14 @@ export async function POST(req: Request) {
     }
     const expiresAt = typeof body.expiresAt === 'string' && body.expiresAt ? new Date(body.expiresAt) : null
     if (expiresAt && isNaN(expiresAt.getTime())) throw new ApiError(400, 'expiresAt is not a valid date')
+    // Optional total-usage cap (anti-abuse: public codes can't be farmed)
+    const maxUses = optionalInt(body.maxUses, 'maxUses', { min: 1, max: 1_000_000 })
 
     const existing = await db.promoCode.findUnique({ where: { code } })
     if (existing) throw new ApiError(400, `Promo code ${code} already exists`)
 
     const promo = await db.promoCode.create({
-      data: { code, description, percentOff: percentOff ?? null, amountOff: amountOff ?? null, active: true, expiresAt },
+      data: { code, description, percentOff: percentOff ?? null, amountOff: amountOff ?? null, active: true, expiresAt, maxUses },
     })
     return NextResponse.json({ promo: serializePromo(promo) })
   })
